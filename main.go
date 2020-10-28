@@ -13,7 +13,8 @@ const (
 	INSERT
 	UPDATE
 	DELETE
-	EXIT
+	COMMIT
+	ABORT
 )
 
 func main() {
@@ -81,7 +82,7 @@ func main() {
 					continue
 				}
 				delete(index, key)
-			case "exit":
+			case "abort":
 				os.Exit(0)
 			default:
 				fmt.Println("command not supported")
