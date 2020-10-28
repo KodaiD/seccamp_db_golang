@@ -33,12 +33,21 @@ func main() {
 					fmt.Println("wrong format -> read <key>")
 				}
 				key := input[1]
-				value, exist := index[key]
-				if !exist {
-					fmt.Println("key not exists")
-					continue
+				if key == "*" {
+					fmt.Println("key		| value")
+					fmt.Println("----------------------------")
+					for k, v := range index {
+						fmt.Printf("%s		| %s\n", k, v)
+					}
+					fmt.Println("----------------------------")
+				} else {
+					value, exist := index[key]
+					if !exist {
+						fmt.Println("key not exists")
+						continue
+					}
+					fmt.Println(value)
 				}
-				fmt.Println(value)
 			case "insert":
 				if len(input) != 3 {
 					fmt.Println("wrong format -> insert <key> <value>")
