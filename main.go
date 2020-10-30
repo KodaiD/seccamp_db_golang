@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -15,16 +18,17 @@ memo
 - checkpointing は起動時に限る
 - write-set に追加で情報を含めてcommit時に redo log 生成する
 - wal format
-	- checksum(crc32)
-	- size
 	- data(cmd, record(key, value))
+	- size
+	- key size
+	- checksum(crc32 IEEE)
 - write-set はデータが少なく、read時の検索などに時間がかからないと仮定
 -------------------------------------------------------------------
  */
 
 const (
-	DbFile = "db.csv"
-	WalFile = "db.log"
+	DbFileName = "seccampdb.db"
+	WalFileName = "seccampdb.log"
 )
 
 // supported operation
@@ -59,22 +63,63 @@ type Index map[string]string
 
 func main() {
 	runtime.GOMAXPROCS(1) // single thread
-	fmt.Println("starting db...")
+	fmt.Println("starting seccampdb...")
+
+	walFile, err := os.OpenFile(WalFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer walFile.Close()
+	dbFile, err := os.OpenFile(DbFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer dbFile.Close()
 
 	index := make(Index)
 	var writeSet WriteSet
 
+	// crash recovery
+	// wal -> db-memory
+	buf := make([]byte, 4096)
+	reader := bufio.NewReader(walFile)
+	_, err = reader.Read(buf)
+	if err != nil {
+		log.Println("cannot do crash recovery")
+	}
+
+	idx := 0
+	for buf[idx] != 0 {
+		size := int(buf[idx])
+		keySize := int(buf[idx+1])
+		cmd := int(buf[idx+2])
+		key := string(buf[idx+3:idx+3+keySize])
+		value := string(buf[idx+3+keySize:idx+size-4])
+		checksum := binary.BigEndian.Uint32(buf[idx+size-4:idx+size])
+
+		if checksum != crc32.ChecksumIEEE([]byte(key)) {
+			fmt.Println("load failed")
+			continue
+		}
+
+		switch cmd {
+		case INSERT:
+			index[key] = value
+		case UPDATE:
+			index[key] = value
+		case DELETE:
+			delete(index, key)
+		}
+		idx += size
+	}
+
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Print("seccamp-db >> ")
+		fmt.Print("seccampdb >> ")
 		if scanner.Scan() {
 			input := strings.Fields(scanner.Text())
-			if len(input) < 2 {
-				fmt.Println("not enough arguments")
-				continue
-			}
 			cmd := input[0]
-			key := input[1]
 
 			switch cmd {
 			case "read":
@@ -82,6 +127,7 @@ func main() {
 					fmt.Println("wrong format -> read <key>")
 					continue
 				}
+				key := input[1]
 
 				exist := checkExistence(index, writeSet, key)
 				if exist == "" {
@@ -95,6 +141,7 @@ func main() {
 					fmt.Println("wrong format -> insert <key> <value>")
 					continue
 				}
+				key := input[1]
 
 				record := Record{key, input[2]}
 
@@ -111,6 +158,7 @@ func main() {
 					fmt.Println("wrong format -> update <key> <value>")
 					continue
 				}
+				key := input[1]
 
 				record := Record{key, input[2]}
 
@@ -126,6 +174,7 @@ func main() {
 					fmt.Println("wrong format -> delete <key>")
 					continue
 				}
+				key := input[1]
 
 				record := Record{key, "deleted"}
 
@@ -137,9 +186,50 @@ func main() {
 				writeSet = append(writeSet, Operation{DELETE, record})
 
 			case "commit":
-				//
+				// make redo log
+				buf := make([]byte, 4096) // 4KiB page size にしとく
+				idx := 0 // 書き込み開始位置
+				for i := 0; i < len(writeSet); i++ {
+					key := []byte(writeSet[i].Key)
+					value := []byte(writeSet[i].Value)
+
+					size := len(key) + len(value) + 7 // データ長は1byteで表せるものとする
+					checksum := crc32.ChecksumIEEE(key)
+
+					// serialize data
+					buf[idx] = uint8(size)
+					buf[idx+1] = uint8(len(key))
+					buf[idx+2] = uint8(writeSet[i].CMD)
+					copy(buf[idx+3:], key)
+					copy(buf[idx+3+len(key):], value)
+					binary.BigEndian.PutUint32(buf[idx+size-4:], checksum)
+
+					idx += size
+				}
+				_, err := walFile.Write(buf)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				// refresh db-memory
+				for i := 0; i < len(writeSet); i++ {
+					op := writeSet[i]
+					switch op.CMD {
+					case INSERT:
+						index[op.Key] = op.Value
+					case UPDATE:
+						index[op.Key] = op.Value
+					case DELETE:
+						delete(index, op.Key)
+					}
+				}
+
+				// delete write-set
+				writeSet = WriteSet{}
+
 			case "abort":
 				os.Exit(0)
+
 			default:
 				fmt.Println("command not supported")
 			}
@@ -168,7 +258,7 @@ func checkExistence(index Index, writeSet WriteSet, key string) string {
 	return value
 }
 
-// とりあえず保留
+// TODO: とりあえず保留
 func readAll(index *Index) {
 	fmt.Println("key		| value")
 	fmt.Println("----------------------------")
