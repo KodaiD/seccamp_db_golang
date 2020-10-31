@@ -27,8 +27,9 @@ memo
  */
 
 const (
-	DbFileName = "seccampdb.db"
+	DbFileName  = "seccampdb.db"
 	WalFileName = "seccampdb.log"
+	TmpFileName = "tmp.db"
 )
 
 // supported operation
@@ -55,11 +56,8 @@ type WriteSet []Operation
 
 type Index map[string]string
 
-//type RedoLog struct {
-//	checksum int
-//	size int
-//	record Record
-//}
+
+
 
 func main() {
 	runtime.GOMAXPROCS(1) // single thread
@@ -70,17 +68,26 @@ func main() {
 		log.Fatal(err)
 	}
 	defer walFile.Close()
-	dbFile, err := os.OpenFile(DbFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer dbFile.Close()
 
 	index := make(Index)
 	var writeSet WriteSet
 
-	// crash recovery
-	// wal -> db-memory
+	// crash recovery (db file -> db-memory)
+	dbFile, err := os.OpenFile(DbFileName, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	scanner := bufio.NewScanner(dbFile)
+	for scanner.Scan() {
+		line := strings.Fields(scanner.Text())
+		key := line[0]
+		value := line[1]
+		index[key] = value
+		fmt.Println("recovering...")
+	}
+	dbFile.Close()
+
+	// crash recovery (wal -> db-memory)
 	buf := make([]byte, 4096)
 	reader := bufio.NewReader(walFile)
 	_, err = reader.Read(buf)
@@ -110,11 +117,38 @@ func main() {
 		case DELETE:
 			delete(index, key)
 		}
+
 		idx += size
 	}
 
+	// checkpointing (db-memory -> db file)
+	tmpFile, err := os.Create(TmpFileName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer tmpFile.Close()
+	for key, value := range index {
+		line := key + " " + value + "\n"
+		_, err := tmpFile.WriteString(line)
+		if err != nil {
+			log.Println(err)
+		}
+	}
+	if err = tmpFile.Sync(); err != nil {
+		log.Fatal(err)
+	}
+	tmpFile.Close()
+	if err = os.Remove(DbFileName); err != nil {
+		log.Fatal(err)
+	}
+	if err = os.Rename(TmpFileName, DbFileName); err != nil {
+		log.Fatal(err)
+	}
 
-	scanner := bufio.NewScanner(os.Stdin)
+
+
+	// main logic
+	scanner = bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("seccampdb >> ")
 		if scanner.Scan() {
@@ -210,6 +244,7 @@ func main() {
 				if err != nil {
 					log.Fatal(err)
 				}
+				walFile.Sync()
 
 				// refresh db-memory
 				for i := 0; i < len(writeSet); i++ {
@@ -228,7 +263,24 @@ func main() {
 				writeSet = WriteSet{}
 
 			case "abort":
+				os.Exit(1)
+
+			case "exit":
+				fmt.Println("shut down...")
+
+				// db-memory -> db file
+				dbFile, _ = os.Create(DbFileName)
+				for key, value := range index {
+					line := key + " " + value + "\n"
+					_, err := dbFile.WriteString(line)
+					if err != nil {
+						log.Println(err)
+					}
+				}
 				os.Exit(0)
+
+			case "all":
+				readAll(index)
 
 			default:
 				fmt.Println("command not supported")
@@ -259,10 +311,10 @@ func checkExistence(index Index, writeSet WriteSet, key string) string {
 }
 
 // TODO: とりあえず保留
-func readAll(index *Index) {
+func readAll(index Index) {
 	fmt.Println("key		| value")
 	fmt.Println("----------------------------")
-	for k, v := range *index {
+	for k, v := range index {
 		fmt.Printf("%s		| %s\n", k, v)
 	}
 	fmt.Println("----------------------------")
