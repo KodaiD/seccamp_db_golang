@@ -16,10 +16,13 @@ memo
 - checkpointing は起動時に限る
 - write-set に追加で情報を含めて commit 時に redo log 生成する
 - wal format
-	- data (cmd, record(key, value))
-	- size
-	- key size
-	- checksum (crc32 IEEE)
+			=========================
+			- size(total size) 1 byte
+			- key size         1 byte
+			- data(key)        ? byte
+			- data(value)      ? byte
+			- checksum         4 byte
+			=========================
 - write-set はデータが少なく、read 時の検索などに時間がかからないと仮定
 - wal size は 4KiB (page size) にしとく
 - wal に記録する 1 record あたりのデータ長は 1 byte で表せるものとする
@@ -45,14 +48,17 @@ func main() {
 	index := make(Index)
 	var writeSet WriteSet
 
-	// crash recovery (db file -> db-memory)
+	// crash recovery (db-file -> db-memory)
 	loadData(index)
 
-	// crash recovery (wal -> db-memory)
+	// crash recovery (wal-file -> db-memory)
 	loadWal(index, walFile)
 
-	// checkpointing (db-memory -> db file)
+	// checkpointing (db-memory -> db-file)
 	saveData(index)
+
+	// clear log-file
+	clearFile(walFile)
 
 	tx := newTx(1, walFile, writeSet, index)
 	// main logic
@@ -106,8 +112,11 @@ func main() {
 
 			case "exit":
 				fmt.Println("shut down...")
-				// db-memory -> db file
+				// db-memory -> DB-file
 				saveData(index)
+				// clear wal-file
+				clearFile(walFile)
+
 				os.Exit(0)
 
 			case "all":

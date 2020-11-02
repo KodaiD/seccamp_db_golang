@@ -26,7 +26,7 @@ type Record struct {
 }
 
 type Operation struct {
-	CMD 	int
+	CMD 	uint
 	Record
 }
 
@@ -36,7 +36,7 @@ type Index map[string]string
 
 
 type Tx struct {
-	ID 	int
+	ID 	uint
 	WalFile 	*os.File
 	WriteSet 	WriteSet
 	Index 		Index // 共有
@@ -52,7 +52,7 @@ type TxLogic interface {
 	SaveWal()
 }
 
-func newTx(id int, walFile *os.File, writeSet WriteSet, index Index) *Tx {
+func newTx(id uint, walFile *os.File, writeSet WriteSet, index Index) *Tx {
 	return &Tx{
 		ID:      	id,
 		WalFile: 	walFile,
@@ -124,45 +124,6 @@ func (tx *Tx) Abort() {
 	os.Exit(1)
 }
 
-func (tx *Tx) SaveWal()  {
-	// make redo log
-	buf := make([]byte, 4096)
-	idx := 0 // 書き込み開始位置
-
-	for i := 0; i < len(tx.WriteSet); i++ {
-		key := []byte(tx.WriteSet[i].Key)
-		value := []byte(tx.WriteSet[i].Value)
-		size := len(key) + len(value) + 7
-		checksum := crc32.ChecksumIEEE(key)
-
-		/*
-			wal format
-			=========================
-			- size(total size) 1 byte
-			- key size         1 byte
-			- data(key)        ? byte
-			- data(value)      ? byte
-			- checksum         4 byte
-			=========================
-		*/
-
-		// serialize data
-		buf[idx] = uint8(size)
-		buf[idx+1] = uint8(len(key))
-		buf[idx+2] = uint8(tx.WriteSet[i].CMD)
-		copy(buf[idx+3:], key)
-		copy(buf[idx+3+len(key):], value)
-		binary.BigEndian.PutUint32(buf[idx+size-4:], checksum)
-
-		idx += size
-	}
-	_, err := tx.WalFile.Write(buf)
-	if err != nil {
-		log.Fatal(err)
-	}
-	tx.WalFile.Sync()
-}
-
 // write-set から指定された key の record の存在を調べる
 func checkExistence(index Index, writeSet WriteSet, key string) string {
 	// check write-set
@@ -193,23 +154,25 @@ func readAll(index Index) {
 	fmt.Println("----------------------------")
 }
 
-func loadData(index Index) {
-	dbFile, err := os.OpenFile(DbFileName, os.O_CREATE|os.O_RDONLY, 0666)
-	if err != nil {
+func (tx *Tx) SaveWal()  {
+	// make redo log
+	buf := make([]byte, 4096)
+	idx := uint(0) // 書き込み開始位置
+
+	for i := 0; i < len(tx.WriteSet); i++ {
+		op := tx.WriteSet[i]
+		checksum := crc32.ChecksumIEEE([]byte(op.Key))
+
+		// serialize data
+		size := serialize(buf, idx, op, checksum)
+		idx += size
+	}
+	if _, err := tx.WalFile.Write(buf); err != nil {
 		log.Fatal(err)
 	}
-	scanner := bufio.NewScanner(dbFile)
-	for scanner.Scan() {
-		line := strings.Fields(scanner.Text())
-		if len(line) != 2 {
-			fmt.Println("broken data")
-		}
-		key := line[0]
-		value := line[1]
-		index[key] = value
-		fmt.Println("recovering...")
+	if err := tx.WalFile.Sync(); err != nil {
+		log.Println("cannot sync wal-file")
 	}
-	dbFile.Close()
 }
 
 func loadWal(index Index, walFile *os.File) {
@@ -222,29 +185,52 @@ func loadWal(index Index, walFile *os.File) {
 
 	idx := uint(0)
 	for buf[idx] != 0 {
-		size := uint(buf[idx])
-		keySize := uint(buf[idx+1])
-		cmd := uint(buf[idx+2])
-		key := string(buf[idx+3 : idx+3+keySize])
-		value := string(buf[idx+3+keySize : idx+size-4])
-		checksum := binary.BigEndian.Uint32(buf[idx+size-4 : idx+size])
+		size, op, checksum := deserialize(buf, idx)
 
-		if checksum != crc32.ChecksumIEEE([]byte(key)) {
+		if checksum != crc32.ChecksumIEEE([]byte(op.Key)) {
 			fmt.Println("load failed")
 			continue
 		}
 
-		switch cmd {
+		switch op.CMD {
 		case INSERT:
-			index[key] = value
+			index[op.Key] = op.Value
 		case UPDATE:
-			index[key] = value
+			index[op.Key] = op.Value
 		case DELETE:
-			delete(index, key)
+			delete(index, op.Key)
 		}
 
 		idx += size
 	}
+}
+
+func serialize(buf []byte, idx uint, op Operation, checksum uint32) uint {
+	size := uint(len(op.Key) + len(op.Value) + 7)
+	buf[idx] = uint8(size)
+	buf[idx+1] = uint8(len(op.Key))
+	buf[idx+2] = uint8(op.CMD)
+	copy(buf[idx+3:], op.Key)
+	copy(buf[idx+3+uint(len(op.Key)):], op.Value)
+	binary.BigEndian.PutUint32(buf[idx+size-4:], checksum)
+
+	return size
+}
+
+func deserialize(buf []byte, idx uint) (uint, Operation, uint32) {
+	size := uint(buf[idx])
+	keySize := uint(buf[idx+1])
+	cmd := uint(buf[idx+2])
+	key := string(buf[idx+3 : idx+3+keySize])
+	value := string(buf[idx+3+keySize : idx+size-4])
+	checksum := binary.BigEndian.Uint32(buf[idx+size-4 : idx+size])
+
+	op := Operation{
+		CMD:    cmd,
+		Record: Record{key, value},
+	}
+
+	return size, op, checksum
 }
 
 func saveData(index Index) {
@@ -262,9 +248,46 @@ func saveData(index Index) {
 	if err = tmpFile.Sync(); err != nil {
 		log.Fatal(err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		log.Println("cannot close tmp-file (DB-file)")
+	}
 	if err = os.Rename(TmpFileName, DbFileName); err != nil {
 		log.Fatal(err)
 	}
-	tmpFile.Sync()
+	if err := tmpFile.Sync(); err != nil {
+		log.Println("cannot sync rename(tmp-file -> DB-file)")
+	}
+}
+
+func loadData(index Index) {
+	dbFile, err := os.OpenFile(DbFileName, os.O_CREATE|os.O_RDONLY, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	scanner := bufio.NewScanner(dbFile)
+	for scanner.Scan() {
+		line := strings.Fields(scanner.Text())
+		if len(line) != 2 {
+			fmt.Println("broken data")
+		}
+		key := line[0]
+		value := line[1]
+		index[key] = value
+		fmt.Println("recovering...")
+	}
+	if err := dbFile.Close(); err != nil {
+		log.Println("cannot close DB-file")
+	}
+}
+
+func clearFile(file *os.File) {
+	if err := file.Truncate(0); err != nil {
+		log.Println(err)
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		log.Println(err)
+	}
+	if err := file.Sync(); err != nil {
+		log.Println(err)
+	}
 }
