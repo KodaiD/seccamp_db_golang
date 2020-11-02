@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -176,32 +177,38 @@ func (tx *Tx) SaveWal()  {
 }
 
 func loadWal(index Index, walFile *os.File) {
-	buf := make([]byte, 4096) // TODO: 小さい
 	reader := bufio.NewReader(walFile)
-	_, err := reader.Read(buf)
-	if err != nil {
-		log.Println("cannot do crash recovery")
-	}
+	for {
+		buf := make([]byte, 4096)
 
-	idx := uint(0)
-	for buf[idx] != 0 {
-		size, op, checksum := deserialize(buf, idx)
-
-		if checksum != crc32.ChecksumIEEE([]byte(op.Key)) {
-			fmt.Println("load failed")
-			continue
+		if _, err := reader.Read(buf); err != nil {
+			if err == io.EOF { // 全て読み終わった
+				break
+			}
+			log.Println("cannot do crash recovery")
+			continue // 次の4KiBを読みにいく
 		}
 
-		switch op.CMD {
-		case INSERT:
-			index[op.Key] = op.Value
-		case UPDATE:
-			index[op.Key] = op.Value
-		case DELETE:
-			delete(index, op.Key)
-		}
+		idx := uint(0)
+		for buf[idx] != 0 {
+			size, op, checksum := deserialize(buf, idx)
 
-		idx += size
+			if checksum != crc32.ChecksumIEEE([]byte(op.Key)) {
+				fmt.Println("load failed")
+				continue
+			}
+
+			switch op.CMD {
+			case INSERT:
+				index[op.Key] = op.Value
+			case UPDATE:
+				index[op.Key] = op.Value
+			case DELETE:
+				delete(index, op.Key)
+			}
+
+			idx += size
+		}
 	}
 }
 
@@ -248,14 +255,14 @@ func saveData(index Index) {
 	if err = tmpFile.Sync(); err != nil {
 		log.Fatal(err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		log.Println("cannot close tmp-file (DB-file)")
-	}
 	if err = os.Rename(TmpFileName, DbFileName); err != nil {
 		log.Fatal(err)
 	}
 	if err := tmpFile.Sync(); err != nil {
-		log.Println("cannot sync rename(tmp-file -> DB-file)")
+		log.Println(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		log.Println(err)
 	}
 }
 
