@@ -6,6 +6,37 @@ import (
 	"testing"
 )
 
+func TestPattern1(t *testing.T) {
+	index := make(Index)
+	tx := setupForTest(index)
+	if err := tx.Insert("key1", "value1"); err != nil {
+		t.Errorf("failed to insert: %v", err)
+	}
+	if err := tx.Read("key1"); err != nil {
+		t.Errorf("failed to read: %v", err)
+	}
+	if err := tx.Insert("key2", "value2"); err != nil {
+		t.Errorf("failed to insert: %v", err)
+	}
+	if err := tx.Update("key1", "new_value1"); err != nil {
+		t.Errorf("failed to update: %v", err)
+	}
+	if err := tx.Insert("key3", "value3"); err != nil {
+		t.Errorf("failed to insert: %v", err)
+	}
+	if err := tx.Delete("key2"); err != nil {
+		t.Errorf("failed to delete: %v", err)
+	}
+	tx.Commit()
+	if err := tx.Insert("key4", "value4"); err != nil {
+		t.Errorf("failed to insert: %v", err)
+	}
+	newTx := setupForTest(index)
+	if err := newTx.Read("key4"); err == nil {
+		t.Error("data after commit exists")
+	}
+}
+
 func TestTx_Read(t *testing.T) {
 	index := make(Index)
 	tx := setupForTest(index)
