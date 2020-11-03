@@ -7,7 +7,8 @@ import (
 )
 
 func TestTx_Read(t *testing.T) {
-	tx := setupForTest()
+	index := make(Index)
+	tx := setupForTest(index)
 
 	// record in write-set
 	tx.WriteSet = append(tx.WriteSet, Operation{
@@ -27,11 +28,13 @@ func TestTx_Read(t *testing.T) {
 	if err := tx.Read("test_read"); err != nil {
 		t.Errorf("failed to read data in index: %v", err)
 	}
-	tx.destructTx()
+	tx.DestructTx()
 }
 
 func TestTx_Insert(t *testing.T) {
-	tx := setupForTest()
+	index := make(Index)
+	tx := setupForTest(index)
+
 	if err := tx.Insert("test_insert", "ans"); err != nil {
 		t.Errorf("failed to insert data: %v", err)
 	}
@@ -41,11 +44,12 @@ func TestTx_Insert(t *testing.T) {
 	if tx.WriteSet[0].Record.Value != "ans" {
 		t.Error("failed to insert data (wrong value)")
 	}
-	tx.destructTx()
+	tx.DestructTx()
 }
 
 func TestTx_Update(t *testing.T) {
-	tx := setupForTest()
+	index := make(Index)
+	tx := setupForTest(index)
 	tx.WriteSet = append(tx.WriteSet, Operation{
 		CMD:    INSERT,
 		Record: Record{
@@ -59,11 +63,12 @@ func TestTx_Update(t *testing.T) {
 	if tx.WriteSet[1].Value != "new_ans" {
 		t.Error("failed to update (wrong value)")
 	}
-	tx.destructTx()
+	tx.DestructTx()
 }
 
 func TestTx_Delete(t *testing.T) {
-	tx := setupForTest()
+	index := make(Index)
+	tx := setupForTest(index)
 	tx.WriteSet = append(tx.WriteSet, Operation{
 		CMD:    INSERT,
 		Record: Record{
@@ -77,11 +82,12 @@ func TestTx_Delete(t *testing.T) {
 	if len(tx.WriteSet) != 2 || tx.WriteSet[1].CMD != DELETE {
 		t.Error("failed to delete data")
 	}
-	tx.destructTx()
+	tx.DestructTx()
 }
 
 func TestTx_Commit(t *testing.T) {
-	tx := setupForTest()
+	index := make(Index)
+	tx := setupForTest(index)
 
 	data1 := Operation{
 		CMD: INSERT,
@@ -123,16 +129,14 @@ func TestTx_Commit(t *testing.T) {
 	if len(tx.WriteSet) != 0 {
 		t.Error("write-set is not cleared")
 	}
-	tx.destructTx()
+	tx.DestructTx()
 }
 
-func setupForTest() *Tx {
-	writeSet := WriteSet{}
-	index := Index{}
-	testWalFile, err := os.OpenFile(WalFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+func setupForTest(index Index) *Tx {
+	testWalFile, err := os.OpenFile(WALFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return newTx(1, testWalFile, writeSet, index)
+	return NewTx(1, testWalFile, index)
 }

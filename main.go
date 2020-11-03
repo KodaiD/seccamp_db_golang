@@ -30,8 +30,8 @@ memo
  */
 
 const (
-	DbFileName  = "seccampdb.db"
-	WalFileName = "seccampdb.log"
+	DBFileName  = "seccampdb.db"
+	WALFileName = "seccampdb.log"
 	TmpFileName = "tmp.db"
 )
 
@@ -39,28 +39,10 @@ func main() {
 	runtime.GOMAXPROCS(1) // single thread
 	fmt.Println("starting seccampdb...")
 
-	walFile, err := os.OpenFile(WalFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer walFile.Close()
+	db := NewDB()
+	db.Setup()
 
-	index := make(Index)
-	var writeSet WriteSet
-
-	// crash recovery (db-file -> db-memory)
-	loadData(index)
-
-	// crash recovery (wal-file -> db-memory)
-	loadWal(index, walFile)
-
-	// checkpointing (db-memory -> db-file)
-	saveData(index)
-
-	// clear log-file
-	clearFile(walFile)
-
-	tx := newTx(1, walFile, writeSet, index)
+	tx := NewTx(1, db.WALFile, db.index)
 	// main logic
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -119,16 +101,10 @@ func main() {
 				tx.Abort()
 
 			case "exit":
-				fmt.Println("shut down...")
-				// db-memory -> DB-file
-				saveData(index)
-				// clear wal-file
-				clearFile(walFile)
-
-				os.Exit(0)
+				db.Shutdown()
 
 			case "all":
-				readAll(index)
+				readAll(db.index)
 
 			default:
 				fmt.Println("command not supported")
