@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -43,16 +44,6 @@ type Tx struct {
 	Index 		Index // 共有
 }
 
-type TxLogic interface {
-	Read(key string)
-	Insert(key string, value string)
-	Update(key string, value string)
-	Delete(key string)
-	Commit()
-	Abort()
-	SaveWal()
-}
-
 func newTx(id uint, walFile *os.File, writeSet WriteSet, index Index) *Tx {
 	return &Tx{
 		ID:      	id,
@@ -62,43 +53,44 @@ func newTx(id uint, walFile *os.File, writeSet WriteSet, index Index) *Tx {
 	}
 }
 
-func (tx *Tx) Read(key string)  {
+func (tx *Tx) Read(key string) error {
 	exist := checkExistence(tx.Index, tx.WriteSet, key)
 	if exist == "" {
-		fmt.Println("key not exists")
+		return errors.New("key not exists")
 	} else {
 		fmt.Println(exist)
 	}
+	return nil
 }
 
-func (tx *Tx) Insert(key, value string) {
+func (tx *Tx) Insert(key, value string) error {
 	record := Record{key, value}
 	exist := checkExistence(tx.Index, tx.WriteSet, key)
 	if exist != "" {
-		fmt.Println("key already exists")
-		return
+		return errors.New("key already exists")
 	}
 	tx.WriteSet = append(tx.WriteSet, Operation{INSERT, record})
+	return nil
 }
 
-func (tx *Tx) Update(key, value string) {
+func (tx *Tx) Update(key, value string) error {
 	record := Record{key, value}
 	exist := checkExistence(tx.Index, tx.WriteSet, key)
 	if exist == "" {
-		fmt.Println("key not exists")
-		return
+		return errors.New("key not exists")
 	}
 	tx.WriteSet = append(tx.WriteSet, Operation{UPDATE, record})
+	return nil
 }
 
-func (tx *Tx) Delete(key string) {
-	record := Record{key, "deleted"}
+func (tx *Tx) Delete(key string) error {
+	record := Record{Key: key}
 	exist := checkExistence(tx.Index, tx.WriteSet, key)
 	if exist == "" {
-		fmt.Println("key not exists")
-		return
+		return errors.New("key not exists")
 	}
 	tx.WriteSet = append(tx.WriteSet, Operation{DELETE, record})
+	return nil
 }
 
 func (tx *Tx) Commit() {
@@ -295,6 +287,13 @@ func clearFile(file *os.File) {
 		log.Println(err)
 	}
 	if err := file.Sync(); err != nil {
+		log.Println(err)
+	}
+}
+
+func (tx *Tx) destructTx() {
+	tx.WriteSet = WriteSet{}
+	if err := tx.WalFile.Close(); err != nil {
 		log.Println(err)
 	}
 }

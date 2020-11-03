@@ -76,7 +76,9 @@ func main() {
 					continue
 				}
 				key := input[1]
-				tx.Read(key)
+				if err := tx.Read(key); err != nil {
+					log.Println(err)
+				}
 
 			case "insert":
 				if len(input) != 3 {
@@ -85,7 +87,9 @@ func main() {
 				}
 				key := input[1]
 				value := input[2]
-				tx.Insert(key, value)
+				if err := tx.Insert(key, value); err != nil {
+					log.Println(err)
+				}
 
 			case "update":
 				if len(input) != 3 {
@@ -94,7 +98,9 @@ func main() {
 				}
 				key := input[1]
 				value := input[2]
-				tx.Update(key, value)
+				if err := tx.Update(key, value); err != nil {
+					log.Println(err)
+				}
 
 			case "delete":
 				if len(input) != 2 {
@@ -102,7 +108,9 @@ func main() {
 					continue
 				}
 				key := input[1]
-				tx.Delete(key)
+				if err := tx.Delete(key); err != nil {
+					log.Println(err)
+				}
 
 			case "commit":
 				tx.Commit()
