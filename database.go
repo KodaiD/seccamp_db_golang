@@ -29,15 +29,19 @@ type DB struct {
 
 type Index map[string]string
 
-func NewDB() *DB {
-	walFile, err := os.OpenFile(WALFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+func NewDB(walFileName, dbFileName string) *DB {
+	walFile, err := os.OpenFile(walFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dbFile, err := os.OpenFile(dbFileName, os.O_CREATE|os.O_RDONLY, 0666)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	return &DB{
 		WALFile: walFile,
-		DBFile:  nil,
+		DBFile:  dbFile,
 		Index:   make(Index),
 	}
 }
@@ -49,6 +53,9 @@ func (db *DB) Shutdown() {
 	// clear wal-file
 	db.clearFile()
 	if err := db.WALFile.Close(); err != nil {
+		log.Println(err)
+	}
+	if err := db.DBFile.Close(); err != nil {
 		log.Println(err)
 	}
 
@@ -154,17 +161,14 @@ func (db *DB) saveData() {
 	if err := tmpFile.Sync(); err != nil {
 		log.Println(err)
 	}
-	if err := tmpFile.Close(); err != nil {
+	if err := db.DBFile.Close(); err != nil {
 		log.Println(err)
 	}
+	db.DBFile = tmpFile
 }
 
 func (db *DB) loadData() {
-	dbFile, err := os.OpenFile(DBFileName, os.O_CREATE|os.O_RDONLY, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	scanner := bufio.NewScanner(dbFile)
+	scanner := bufio.NewScanner(db.DBFile)
 	for scanner.Scan() {
 		line := strings.Fields(scanner.Text())
 		if len(line) != 2 {
@@ -174,9 +178,6 @@ func (db *DB) loadData() {
 		value := line[1]
 		db.Index[key] = value
 		fmt.Println("recovering...")
-	}
-	if err := dbFile.Close(); err != nil {
-		log.Println("cannot close DB-file")
 	}
 }
 

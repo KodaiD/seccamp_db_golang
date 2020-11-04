@@ -39,7 +39,7 @@ func main() {
 	runtime.GOMAXPROCS(1) // single thread
 	fmt.Println("starting seccampdb...")
 
-	db := NewDB()
+	db := NewDB(WALFileName, DBFileName)
 	db.Setup()
 
 	tx := NewTx(1, db.WALFile, db.Index)
