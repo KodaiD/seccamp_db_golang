@@ -9,7 +9,7 @@ seccamp_db_golang >> ./seccampdb
 ```
 
 ### Usage
-```bash
+```
 // insert new record
 seccampdb >> insert <key> <value>
 
