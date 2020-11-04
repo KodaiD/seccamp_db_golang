@@ -164,7 +164,7 @@ func TestTx_Commit(t *testing.T) {
 }
 
 func setupForTest(index Index) *Tx {
-	testWalFile, err := os.OpenFile(WALFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
+	testWalFile, err := os.OpenFile(TestWALFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatal(err)
 	}
