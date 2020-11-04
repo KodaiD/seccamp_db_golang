@@ -119,7 +119,7 @@ func checkExistence(index Index, writeSet WriteSet, key string) string {
 			return operation.Record.Value
 		}
 	}
-	// check index
+	// check Index
 	value, exist := index[key]
 	if !exist {
 		return ""

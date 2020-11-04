@@ -53,11 +53,11 @@ func TestTx_Read(t *testing.T) {
 		t.Errorf("failed to read data in write-set: %v", err)
 	}
 
-	// record in index
+	// record in Index
 	tx.WriteSet = WriteSet{}
 	tx.Index["test_read"] = "ans"
 	if err := tx.Read("test_read"); err != nil {
-		t.Errorf("failed to read data in index: %v", err)
+		t.Errorf("failed to read data in Index: %v", err)
 	}
 	tx.DestructTx()
 }

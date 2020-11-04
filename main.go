@@ -42,7 +42,7 @@ func main() {
 	db := NewDB()
 	db.Setup()
 
-	tx := NewTx(1, db.WALFile, db.index)
+	tx := NewTx(1, db.WALFile, db.Index)
 	// main logic
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -104,7 +104,7 @@ func main() {
 				db.Shutdown()
 
 			case "all":
-				readAll(db.index)
+				readAll(db.Index)
 
 			default:
 				fmt.Println("command not supported")

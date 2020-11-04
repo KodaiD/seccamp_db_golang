@@ -24,7 +24,7 @@ const (
 type DB struct {
 	WALFile *os.File
 	DBFile  *os.File
-	index   Index
+	Index   Index
 }
 
 type Index map[string]string
@@ -34,12 +34,11 @@ func NewDB() *DB {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer walFile.Close()
 
 	return &DB{
 		WALFile: walFile,
 		DBFile:  nil,
-		index:   make(Index),
+		Index:   make(Index),
 	}
 }
 
@@ -49,6 +48,9 @@ func (db *DB) Shutdown() {
 	db.saveData()
 	// clear wal-file
 	db.clearFile()
+	if err := db.WALFile.Close(); err != nil {
+		log.Println(err)
+	}
 
 	os.Exit(0)
 }
@@ -91,11 +93,11 @@ func (db *DB) loadWal() {
 
 			switch op.CMD {
 			case INSERT:
-				db.index[op.Key] = op.Value
+				db.Index[op.Key] = op.Value
 			case UPDATE:
-				db.index[op.Key] = op.Value
+				db.Index[op.Key] = op.Value
 			case DELETE:
-				delete(db.index, op.Key)
+				delete(db.Index, op.Key)
 			}
 
 			idx += size
@@ -136,7 +138,7 @@ func (db *DB) saveData() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for key, value := range db.index {
+	for key, value := range db.Index {
 		line := key + " " + value + "\n"
 		_, err := tmpFile.WriteString(line)
 		if err != nil {
@@ -170,7 +172,7 @@ func (db *DB) loadData() {
 		}
 		key := line[0]
 		value := line[1]
-		db.index[key] = value
+		db.Index[key] = value
 		fmt.Println("recovering...")
 	}
 	if err := dbFile.Close(); err != nil {
