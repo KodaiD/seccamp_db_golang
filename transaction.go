@@ -21,30 +21,28 @@ type Operation struct {
 type WriteSet []Operation
 
 type Tx struct {
-	ID 	uint
-	WalFile 	*os.File
-	WriteSet 	WriteSet
-	Index 		Index // 共有
+	id       uint
+	writeSet WriteSet
+	db       *DB
 }
 
-func NewTx(id uint, walFile *os.File, index Index) *Tx {
+func NewTx(id uint, db *DB) *Tx {
 	return &Tx{
-		ID:      	id,
-		WalFile: 	walFile,
-		WriteSet: 	WriteSet{},
-		Index: 		index,
+		id:       id,
+		writeSet: WriteSet{},
+		db: db,
 	}
 }
 
 func (tx *Tx) DestructTx() {
-	tx.WriteSet = WriteSet{}
-	if err := tx.WalFile.Close(); err != nil {
+	tx.writeSet = WriteSet{}
+	if err := tx.db.WALFile.Close(); err != nil {
 		log.Println(err)
 	}
 }
 
 func (tx *Tx) Read(key string) error {
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
+	exist := checkExistence(tx.db.Index, tx.writeSet, key)
 	if exist == "" {
 		return errors.New("key not exists")
 	} else {
@@ -55,31 +53,31 @@ func (tx *Tx) Read(key string) error {
 
 func (tx *Tx) Insert(key, value string) error {
 	record := Record{key, value}
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
+	exist := checkExistence(tx.db.Index, tx.writeSet, key)
 	if exist != "" {
 		return errors.New("key already exists")
 	}
-	tx.WriteSet = append(tx.WriteSet, Operation{INSERT, record})
+	tx.writeSet = append(tx.writeSet, Operation{INSERT, record})
 	return nil
 }
 
 func (tx *Tx) Update(key, value string) error {
 	record := Record{key, value}
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
+	exist := checkExistence(tx.db.Index, tx.writeSet, key)
 	if exist == "" {
 		return errors.New("key not exists")
 	}
-	tx.WriteSet = append(tx.WriteSet, Operation{UPDATE, record})
+	tx.writeSet = append(tx.writeSet, Operation{UPDATE, record})
 	return nil
 }
 
 func (tx *Tx) Delete(key string) error {
 	record := Record{Key: key}
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
+	exist := checkExistence(tx.db.Index, tx.writeSet, key)
 	if exist == "" {
 		return errors.New("key not exists")
 	}
-	tx.WriteSet = append(tx.WriteSet, Operation{DELETE, record})
+	tx.writeSet = append(tx.writeSet, Operation{DELETE, record})
 	return nil
 }
 
@@ -88,19 +86,19 @@ func (tx *Tx) Commit() {
 	tx.SaveWal()
 
 	// write-set -> db-memory
-	for i := 0; i < len(tx.WriteSet); i++ {
-		op := tx.WriteSet[i]
+	for i := 0; i < len(tx.writeSet); i++ {
+		op := tx.writeSet[i]
 		switch op.CMD {
 		case INSERT:
-			tx.Index[op.Key] = op.Value
+			tx.db.Index[op.Key] = op.Value
 		case UPDATE:
-			tx.Index[op.Key] = op.Value
+			tx.db.Index[op.Key] = op.Value
 		case DELETE:
-			delete(tx.Index, op.Key)
+			delete(tx.db.Index, op.Key)
 		}
 	}
 	// delete write-set
-	tx.WriteSet = WriteSet{}
+	tx.writeSet = WriteSet{}
 }
 
 func (tx *Tx) Abort() {
@@ -142,18 +140,21 @@ func (tx *Tx) SaveWal()  {
 	buf := make([]byte, 4096)
 	idx := uint(0) // 書き込み開始位置
 
-	for i := 0; i < len(tx.WriteSet); i++ {
-		op := tx.WriteSet[i]
+	for i := 0; i < len(tx.writeSet); i++ {
+		op := tx.writeSet[i]
 		checksum := crc32.ChecksumIEEE([]byte(op.Key))
 
 		// serialize data
 		size := serialize(buf, idx, op, checksum)
 		idx += size
 	}
-	if _, err := tx.WalFile.Write(buf); err != nil {
+
+	tx.db.walMu.Lock()
+	if _, err := tx.db.WALFile.Write(buf); err != nil {
 		log.Fatal(err)
 	}
-	if err := tx.WalFile.Sync(); err != nil {
+	if err := tx.db.WALFile.Sync(); err != nil {
 		log.Println("cannot sync wal-file")
 	}
+	tx.db.walMu.Unlock()
 }

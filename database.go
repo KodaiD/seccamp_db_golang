@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 )
 
 // supported operation
@@ -22,6 +23,7 @@ const (
 )
 
 type DB struct {
+	walMu sync.Mutex
 	WALFile *os.File
 	DBFile  *os.File
 	Index   Index
@@ -74,6 +76,66 @@ func (db *DB) Setup() {
 
 	// clear log-file
 	db.clearFile()
+}
+
+func (db *DB) StartTx(reader io.Reader) {
+	tx := NewTx(1, db) // TODO: unique id
+	scanner := bufio.NewScanner(reader)
+	for {
+		fmt.Print("seccampdb >> ")
+		if scanner.Scan() {
+			input := strings.Fields(scanner.Text())
+			cmd := input[0]
+			switch cmd {
+			case "read":
+				if len(input) != 2 {
+					fmt.Println("wrong format -> read <key>")
+					continue
+				}
+				key := input[1]
+				if err := tx.Read(key); err != nil {
+					log.Println(err)
+				}
+			case "insert":
+				if len(input) != 3 {
+					fmt.Println("wrong format -> insert <key> <value>")
+					continue
+				}
+				key := input[1]
+				value := input[2]
+				if err := tx.Insert(key, value); err != nil {
+					log.Println(err)
+				}
+			case "update":
+				if len(input) != 3 {
+					fmt.Println("wrong format -> update <key> <value>")
+					continue
+				}
+				key := input[1]
+				value := input[2]
+				if err := tx.Update(key, value); err != nil {
+					log.Println(err)
+				}
+			case "delete":
+				if len(input) != 2 {
+					fmt.Println("wrong format -> delete <key>")
+					continue
+				}
+				key := input[1]
+				if err := tx.Delete(key); err != nil {
+					log.Println(err)
+				}
+			case "commit":
+				tx.Commit()
+			case "abort":
+				tx.Abort()
+			case "all":
+				readAll(db.Index)
+			default:
+				fmt.Println("command not supported")
+			}
+		}
+	}
 }
 
 func (db *DB) loadWal() {

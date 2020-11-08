@@ -42,7 +42,7 @@ func TestTx_Read(t *testing.T) {
 	tx := setupForTest(index)
 
 	// record in write-set
-	tx.WriteSet = append(tx.WriteSet, Operation{
+	tx.writeSet = append(tx.writeSet, Operation{
 		CMD:    INSERT,
 		Record: Record{
 			Key: "test_read",
@@ -54,7 +54,7 @@ func TestTx_Read(t *testing.T) {
 	}
 
 	// record in Index
-	tx.WriteSet = WriteSet{}
+	tx.writeSet = WriteSet{}
 	tx.Index["test_read"] = "ans"
 	if err := tx.Read("test_read"); err != nil {
 		t.Errorf("failed to read data in Index: %v", err)
@@ -69,10 +69,10 @@ func TestTx_Insert(t *testing.T) {
 	if err := tx.Insert("test_insert", "ans"); err != nil {
 		t.Errorf("failed to insert data: %v", err)
 	}
-	if tx.WriteSet[0].Record.Key != "test_insert" {
+	if tx.writeSet[0].Record.Key != "test_insert" {
 		t.Error("failed to insert data (wrong key)")
 	}
-	if tx.WriteSet[0].Record.Value != "ans" {
+	if tx.writeSet[0].Record.Value != "ans" {
 		t.Error("failed to insert data (wrong value)")
 	}
 	tx.DestructTx()
@@ -81,7 +81,7 @@ func TestTx_Insert(t *testing.T) {
 func TestTx_Update(t *testing.T) {
 	index := make(Index)
 	tx := setupForTest(index)
-	tx.WriteSet = append(tx.WriteSet, Operation{
+	tx.writeSet = append(tx.writeSet, Operation{
 		CMD:    INSERT,
 		Record: Record{
 			Key: "test_update",
@@ -91,7 +91,7 @@ func TestTx_Update(t *testing.T) {
 	if err := tx.Update("test_update", "new_ans"); err != nil {
 		t.Errorf("failed to update data: %v", err)
 	}
-	if tx.WriteSet[1].Value != "new_ans" {
+	if tx.writeSet[1].Value != "new_ans" {
 		t.Error("failed to update (wrong value)")
 	}
 	tx.DestructTx()
@@ -100,7 +100,7 @@ func TestTx_Update(t *testing.T) {
 func TestTx_Delete(t *testing.T) {
 	index := make(Index)
 	tx := setupForTest(index)
-	tx.WriteSet = append(tx.WriteSet, Operation{
+	tx.writeSet = append(tx.writeSet, Operation{
 		CMD:    INSERT,
 		Record: Record{
 			Key: "test_delete",
@@ -110,7 +110,7 @@ func TestTx_Delete(t *testing.T) {
 	if err := tx.Delete("test_delete"); err != nil {
 		t.Errorf("failed to delete data: %v", err)
 	}
-	if len(tx.WriteSet) != 2 || tx.WriteSet[1].CMD != DELETE {
+	if len(tx.writeSet) != 2 || tx.writeSet[1].CMD != DELETE {
 		t.Error("failed to delete data")
 	}
 	tx.DestructTx()
@@ -147,7 +147,7 @@ func TestTx_Commit(t *testing.T) {
 			Key: "test_commit2",
 		},
 	}
-	tx.WriteSet = []Operation{data1, data2, data3, data4}
+	tx.writeSet = []Operation{data1, data2, data3, data4}
 
 	tx.Commit()
 
@@ -157,7 +157,7 @@ func TestTx_Commit(t *testing.T) {
 	if tx.Index["test_commit1"] != "new_ans" {
 		t.Error("update log is not committed")
 	}
-	if len(tx.WriteSet) != 0 {
+	if len(tx.writeSet) != 0 {
 		t.Error("write-set is not cleared")
 	}
 	tx.DestructTx()

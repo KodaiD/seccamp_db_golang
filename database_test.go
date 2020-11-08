@@ -80,7 +80,7 @@ const (
 //	}
 //
 //	// test data -> wal-file
-//	testWriteSet := WriteSet{
+//	testWriteSet := writeSet{
 //		Operation{INSERT, Record{"test4", "value4"}},
 //		Operation{UPDATE, Record{"test3", "new_value3"}},
 //		Operation{DELETE, Record{"test2", ""}},
