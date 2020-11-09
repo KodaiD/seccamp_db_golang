@@ -43,7 +43,7 @@ func (tx *Tx) DestructTx() {
 
 func (tx *Tx) Read(key string) error {
 	exist := checkExistence(tx.db.Index, tx.writeSet, key)
-	if exist == "" {
+	if exist.Value == "" {
 		return errors.New("key not exists")
 	} else {
 		fmt.Println(exist)
@@ -54,7 +54,7 @@ func (tx *Tx) Read(key string) error {
 func (tx *Tx) Insert(key, value string) error {
 	record := Record{key, value}
 	exist := checkExistence(tx.db.Index, tx.writeSet, key)
-	if exist != "" {
+	if exist.Value != "" {
 		return errors.New("key already exists")
 	}
 	tx.writeSet = append(tx.writeSet, Operation{INSERT, record})
@@ -64,7 +64,7 @@ func (tx *Tx) Insert(key, value string) error {
 func (tx *Tx) Update(key, value string) error {
 	record := Record{key, value}
 	exist := checkExistence(tx.db.Index, tx.writeSet, key)
-	if exist == "" {
+	if exist.Value == "" {
 		return errors.New("key not exists")
 	}
 	tx.writeSet = append(tx.writeSet, Operation{UPDATE, record})
@@ -74,7 +74,7 @@ func (tx *Tx) Update(key, value string) error {
 func (tx *Tx) Delete(key string) error {
 	record := Record{Key: key}
 	exist := checkExistence(tx.db.Index, tx.writeSet, key)
-	if exist == "" {
+	if exist.Value == "" {
 		return errors.New("key not exists")
 	}
 	tx.writeSet = append(tx.writeSet, Operation{DELETE, record})
@@ -90,9 +90,9 @@ func (tx *Tx) Commit() {
 		op := tx.writeSet[i]
 		switch op.CMD {
 		case INSERT:
-			tx.db.Index[op.Key] = op.Value
+			tx.db.Index[op.Key] = op.Record
 		case UPDATE:
-			tx.db.Index[op.Key] = op.Value
+			tx.db.Index[op.Key] = op.Record
 		case DELETE:
 			delete(tx.db.Index, op.Key)
 		}
@@ -106,23 +106,23 @@ func (tx *Tx) Abort() {
 }
 
 // write-set から指定された key の record の存在を調べる
-func checkExistence(index Index, writeSet WriteSet, key string) string {
+func checkExistence(index Index, writeSet WriteSet, key string) Record {
 	// check write-set
 	for i := len(writeSet) - 1; 0 <= i; i-- {
 		operation := writeSet[i]
 		if key == operation.Record.Key {
 			if operation.CMD == DELETE {
-				return ""
+				return Record{}
 			}
-			return operation.Record.Value
+			return operation.Record
 		}
 	}
 	// check Index
-	value, exist := index[key]
+	record, exist := index[key]
 	if !exist {
-		return ""
+		return Record{}
 	}
-	return value
+	return record
 }
 
 // read all data in db-memory

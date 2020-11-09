@@ -29,7 +29,7 @@ type DB struct {
 	Index   Index
 }
 
-type Index map[string]string
+type Index map[string]Record
 
 func NewDB(walFileName, dbFileName string) *DB {
 	walFile, err := os.OpenFile(walFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
@@ -128,9 +128,9 @@ func (db *DB) StartTx(reader io.Reader) {
 			case "commit":
 				tx.Commit()
 			case "abort":
-				tx.Abort()
+				tx.Abort() // TODO:
 			case "all":
-				readAll(db.Index)
+				readAll(db.Index) // TODO:
 			default:
 				fmt.Println("command not supported")
 			}
@@ -162,9 +162,9 @@ func (db *DB) loadWal() {
 
 			switch op.CMD {
 			case INSERT:
-				db.Index[op.Key] = op.Value
+				db.Index[op.Key] = op.Record
 			case UPDATE:
-				db.Index[op.Key] = op.Value
+				db.Index[op.Key] = op.Record
 			case DELETE:
 				delete(db.Index, op.Key)
 			}
@@ -207,8 +207,8 @@ func (db *DB) saveData() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for key, value := range db.Index {
-		line := key + " " + value + "\n"
+	for key, record := range db.Index {
+		line := key + " " + record.Value + "\n"
 		_, err := tmpFile.WriteString(line)
 		if err != nil {
 			log.Println(err)
@@ -238,7 +238,7 @@ func (db *DB) loadData() {
 		}
 		key := line[0]
 		value := line[1]
-		db.Index[key] = value
+		db.Index[key] = Record{key, value}
 		fmt.Println("recovering...")
 	}
 }
