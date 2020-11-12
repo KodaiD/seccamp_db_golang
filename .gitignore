@@ -1,7 +1,4 @@
 .idea
-seccampdb.db
-seccampdb.log
-test_seccampdb.db
-test_seccampdb.log
-
+*.db
+*.log
 seccampdb
