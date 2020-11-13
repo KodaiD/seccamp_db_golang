@@ -10,6 +10,7 @@ func setupForTest() *Tx {
 	return NewTx(1, db)
 }
 
+// 1 tx
 func TestPattern1(t *testing.T) {
 	tx := setupForTest()
 	if err := tx.Insert("key1", "value1"); err != nil {
@@ -37,6 +38,54 @@ func TestPattern1(t *testing.T) {
 	newTx := setupForTest()
 	if err := newTx.Read("key4"); err == nil {
 		t.Error("data after commit exists")
+	}
+}
+
+// 2 tx (parallel)
+func TestPattern2(t *testing.T) {
+	db := NewTestDB()
+	db.index["key1"] = Record{"key1", "value1", new(rwuMutex.RWUMutex), false}
+	db.index["key2"] = Record{"key2", "value2", new(rwuMutex.RWUMutex), false}
+
+	tx1 := NewTx(1, db)
+	tx2 := NewTx(2, db)
+
+	if err := tx1.Read("key1"); err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	if err := tx2.Read("key1"); err != nil {
+		t.Fatalf("cannot get read lock: %v", err)
+	}
+	if err := tx1.Insert("key3", "value3"); err != nil {
+		t.Fatalf("failed to insert: %v", err)
+	}
+	if err := tx2.Read("key3"); err == nil {
+		t.Fatalf("write lock exist, should be failed: %v", err)
+	}
+	if err := tx1.Update("key2", "new_value2"); err != nil {
+		t.Fatalf("failed to update: %v", err)
+	}
+	if err := tx2.Update("key2", "new_new_value"); err == nil {
+		t.Fatalf("write lock exist, should be failed: %v", err)
+	}
+}
+
+func TestLogicalDelete(t *testing.T) {
+	db := NewTestDB()
+	db.index["key1"] = Record{"key1", "value1", new(rwuMutex.RWUMutex), false}
+
+	tx1 := NewTx(1, db)
+	tx2 := NewTx(2, db)
+
+	if err := tx1.Delete("key1"); err != nil {
+		t.Fatalf("failed to delete: %v", err)
+	}
+	if err := tx2.Read("key1"); err == nil {
+		t.Fatalf("write lock exist, should be failed: %v", err)
+	}
+	tx1.Commit()
+	if len(db.index) != 1 && !db.index["key1"].deleted {
+		t.Fatal("logical delete failed")
 	}
 }
 

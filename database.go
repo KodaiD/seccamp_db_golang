@@ -143,6 +143,7 @@ func (db *DB) StartTx(reader io.Reader) {
 				tx.readSet = make(ReadSet)
 				tx = NewTx(1, db)
 			case "exit":
+				tx.DestructTx()
 				return
 			case "all":
 				readAll(db.index) // TODO:

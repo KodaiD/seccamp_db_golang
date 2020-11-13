@@ -46,7 +46,7 @@ func NewTx(id uint, db *DB) *Tx {
 	}
 }
 
-func (tx *Tx) DestructTx() { // TODO:
+func (tx *Tx) DestructTx() {
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
 	if err := tx.db.wALFile.Close(); err != nil {
@@ -64,6 +64,7 @@ func (tx *Tx) Read(key string) error {
 	case InIndex:
 		if !record.mu.TryRLock() {
 			tx.Abort()
+			return errors.New("abort")
 		}
 		tx.readSet[record.key] = record
 	case NotExist:
@@ -79,6 +80,7 @@ func (tx *Tx) Insert(key, value string) error {
 	}
 	if !record.mu.TryLock() {
 		tx.Abort()
+		return errors.New("abort")
 	}
 	tx.writeSet[key] = &Operation{INSERT, &record}
 	return nil
@@ -90,12 +92,14 @@ func (tx *Tx) Update(key, value string) error {
 	case InReadSet:
 		if !record.mu.TryUpgrade() {
 			tx.Abort()
+			return errors.New("abort")
 		}
 	case InWriteSet:
 		//
 	case InIndex:
 		if !record.mu.TryLock() {
 			tx.Abort()
+			return errors.New("abort")
 		}
 	case NotExist:
 		return errors.New("key doesn't exist")
@@ -111,12 +115,14 @@ func (tx *Tx) Delete(key string) error {
 	case InReadSet:
 		if !record.mu.TryUpgrade() {
 			tx.Abort()
+			return errors.New("abort")
 		}
 	case InWriteSet:
 		//
 	case InIndex:
 		if !record.mu.TryLock() {
 			tx.Abort()
+			return errors.New("abort")
 		}
 	case NotExist:
 		return errors.New("key doesn't exist")
