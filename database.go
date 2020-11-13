@@ -181,7 +181,7 @@ func (db *DB) loadWal() {
 			case UPDATE:
 				db.index[op.record.key] = *op.record
 			case DELETE:
-				//
+				delete(db.index, op.record.key)
 			}
 
 			idx += size
@@ -218,6 +218,7 @@ func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 }
 
 func (db *DB) saveData() {
+	fmt.Println("start----------------")
 	tmpFile, err := os.Create(TmpFileName)
 	if err != nil {
 		log.Fatal(err)

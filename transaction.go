@@ -97,7 +97,7 @@ func (tx *Tx) Update(key, value string) error {
 	return nil
 }
 
-func (tx *Tx) Delete(key string) error { // TODO:
+func (tx *Tx) Delete(key string) error {
 	record, inReadSet, err := tx.checkExistence(key)
 	if err != nil {
 		return err
@@ -113,11 +113,12 @@ func (tx *Tx) Delete(key string) error { // TODO:
 		}
 	}
 
-	tx.writeSet[key] = &Operation{DELETE, nil}
+	record.value = ""
+	tx.writeSet[key] = &Operation{DELETE, record}
 	return nil
 }
 
-func (tx *Tx) Commit() { // TODO:
+func (tx *Tx) Commit() { // TODO: lockの場所適切？
 	// unlock all read lock
 	for _, record := range tx.readSet {
 		record.mu.RUnlock()
@@ -165,7 +166,7 @@ func (tx *Tx) Abort() {
 func (tx *Tx) checkExistence(key string) (*Record, bool, error) {
 	// check write-set
 	for _, op := range tx.writeSet {
-		if op.record != nil && key == op.record.key {
+		if op.cmd != DELETE && key == op.record.key {
 			return op.record, false, nil
 		}
 	}
@@ -208,7 +209,7 @@ func readAll(index Index) {
 	fmt.Println("key		| value")
 	fmt.Println("----------------------------")
 	for k, v := range index {
-		fmt.Printf("%s		| %s\n", k, v)
+		fmt.Printf("%s		| %s\n", k, v.value)
 	}
 	fmt.Println("----------------------------")
 }
