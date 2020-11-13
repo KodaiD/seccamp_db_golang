@@ -139,7 +139,8 @@ func (tx *Tx) Commit() { // TODO: lockの場所適切？
 		case DELETE:
 			// delete(tx.db.index, op.record.key) これはまずい
 			// 論理 delete
-			op.record.deleted = false
+			op.record.deleted = true
+			tx.db.index[op.record.key] = *op.record
 			op.record.mu.Unlock()
 		}
 	}
