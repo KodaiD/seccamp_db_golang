@@ -3,138 +3,199 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/KodaiD/rwumutex"
 	"hash/crc32"
 	"log"
-	"os"
+)
+
+const (
+	InReadSet = 1 + iota
+	InWriteSet
+	InIndex
+	NotExist
 )
 
 type Record struct {
-	Key 	string
-	Value 	string
+	key     string
+	value   string
+	mu      *rwuMutex.RWUMutex
+	deleted bool // db-memory
 }
 
 type Operation struct {
-	CMD 	uint
-	Record
+	cmd    uint
+	record *Record
 }
 
-type WriteSet []Operation
+type WriteSet map[string]*Operation
+type ReadSet map[string]*Record
 
 type Tx struct {
-	ID 	uint
-	WalFile 	*os.File
-	WriteSet 	WriteSet
-	Index 		Index // 共有
+	id       uint
+	writeSet WriteSet
+	readSet  ReadSet
+	db       *DB
 }
 
-func NewTx(id uint, walFile *os.File, index Index) *Tx {
+func NewTx(id uint, db *DB) *Tx {
 	return &Tx{
-		ID:      	id,
-		WalFile: 	walFile,
-		WriteSet: 	WriteSet{},
-		Index: 		index,
+		id:       id,
+		writeSet: make(WriteSet),
+		readSet:  make(ReadSet),
+		db:       db,
 	}
 }
 
 func (tx *Tx) DestructTx() {
-	tx.WriteSet = WriteSet{}
-	if err := tx.WalFile.Close(); err != nil {
+	tx.writeSet = make(WriteSet)
+	tx.readSet = make(ReadSet)
+	if err := tx.db.wALFile.Close(); err != nil {
 		log.Println(err)
 	}
 }
 
 func (tx *Tx) Read(key string) error {
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
-	if exist == "" {
-		return errors.New("key not exists")
-	} else {
-		fmt.Println(exist)
+	record, where := tx.checkExistence(key)
+	switch where {
+	case InReadSet:
+		fmt.Println(record.value)
+	case InWriteSet:
+		fmt.Println(record.value)
+	case InIndex:
+		if !record.mu.TryRLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+		tx.readSet[record.key] = record
+	case NotExist:
+		return errors.New("key doesn't exist")
 	}
 	return nil
 }
 
 func (tx *Tx) Insert(key, value string) error {
-	record := Record{key, value}
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
-	if exist != "" {
+	record := Record{key, value, new(rwuMutex.RWUMutex), false}
+	if _, where := tx.checkExistence(key); where != NotExist {
 		return errors.New("key already exists")
 	}
-	tx.WriteSet = append(tx.WriteSet, Operation{INSERT, record})
+	if !record.mu.TryLock() {
+		tx.Abort()
+		return errors.New("abort")
+	}
+	tx.writeSet[key] = &Operation{INSERT, &record}
 	return nil
 }
 
 func (tx *Tx) Update(key, value string) error {
-	record := Record{key, value}
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
-	if exist == "" {
-		return errors.New("key not exists")
+	record, where := tx.checkExistence(key)
+	switch where {
+	case InReadSet:
+		if !record.mu.TryUpgrade() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+	case InWriteSet:
+		//
+	case InIndex:
+		if !record.mu.TryLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+	case NotExist:
+		return errors.New("key doesn't exist")
 	}
-	tx.WriteSet = append(tx.WriteSet, Operation{UPDATE, record})
+	record.value = value
+	tx.writeSet[key] = &Operation{UPDATE, record}
 	return nil
 }
 
 func (tx *Tx) Delete(key string) error {
-	record := Record{Key: key}
-	exist := checkExistence(tx.Index, tx.WriteSet, key)
-	if exist == "" {
-		return errors.New("key not exists")
+	record, where := tx.checkExistence(key)
+	switch where {
+	case InReadSet:
+		if !record.mu.TryUpgrade() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+	case InWriteSet:
+		//
+	case InIndex:
+		if !record.mu.TryLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+	case NotExist:
+		return errors.New("key doesn't exist")
 	}
-	tx.WriteSet = append(tx.WriteSet, Operation{DELETE, record})
+	record.value = ""
+	tx.writeSet[key] = &Operation{DELETE, record}
 	return nil
 }
 
 func (tx *Tx) Commit() {
+	// unlock all read lock
+	for _, record := range tx.readSet {
+		record.mu.RUnlock()
+	}
+
 	// write-set -> wal
 	tx.SaveWal()
 
 	// write-set -> db-memory
-	for i := 0; i < len(tx.WriteSet); i++ {
-		op := tx.WriteSet[i]
-		switch op.CMD {
+	for _, op := range tx.writeSet {
+		switch op.cmd {
 		case INSERT:
-			tx.Index[op.Key] = op.Value
+			tx.db.index[op.record.key] = *op.record
+			op.record.mu.Unlock()
 		case UPDATE:
-			tx.Index[op.Key] = op.Value
+			tx.db.index[op.record.key] = *op.record
+			op.record.mu.Unlock()
 		case DELETE:
-			delete(tx.Index, op.Key)
+			// delete(tx.db.index, op.record.key) これはまずい
+			// 論理 delete
+			op.record.deleted = true
+			tx.db.index[op.record.key] = *op.record
+			op.record.mu.Unlock()
 		}
 	}
-	// delete write-set
-	tx.WriteSet = WriteSet{}
+
+	// delete read/write-set
+	tx.writeSet = make(WriteSet)
+	tx.readSet = make(ReadSet)
 }
 
 func (tx *Tx) Abort() {
-	os.Exit(1)
+	// unlock
+	for _, record := range tx.readSet {
+		record.mu.RUnlock()
+	}
+	for _, op := range tx.writeSet {
+		op.record.mu.Unlock()
+	}
+
+	// delete read/write-set
+	tx.writeSet = make(WriteSet)
+	tx.readSet = make(ReadSet)
+
+	fmt.Println("Abort!")
 }
 
-// write-set から指定された key の record の存在を調べる
-func checkExistence(index Index, writeSet WriteSet, key string) string {
+func (tx *Tx) checkExistence(key string) (*Record, uint) {
 	// check write-set
-	for i := len(writeSet) - 1; 0 <= i; i-- {
-		operation := writeSet[i]
-		if key == operation.Record.Key {
-			if operation.CMD == DELETE {
-				return ""
-			}
-			return operation.Record.Value
+	for _, op := range tx.writeSet {
+		if op.cmd != DELETE && key == op.record.key {
+			return op.record, InWriteSet
 		}
 	}
-	// check Index
-	value, exist := index[key]
-	if !exist {
-		return ""
+	// check read-set
+	if record, exist := tx.readSet[key]; exist {
+		return record, InReadSet
 	}
-	return value
-}
-
-// read all data in db-memory
-func readAll(index Index) {
-	fmt.Println("key		| value")
-	fmt.Println("----------------------------")
-	for k, v := range index {
-		fmt.Printf("%s		| %s\n", k, v)
+	// check index
+	if record, exist := tx.db.index[key]; exist && !record.deleted {
+		return &record, InIndex
 	}
-	fmt.Println("----------------------------")
+	return nil, NotExist
 }
 
 func (tx *Tx) SaveWal()  {
@@ -142,18 +203,30 @@ func (tx *Tx) SaveWal()  {
 	buf := make([]byte, 4096)
 	idx := uint(0) // 書き込み開始位置
 
-	for i := 0; i < len(tx.WriteSet); i++ {
-		op := tx.WriteSet[i]
-		checksum := crc32.ChecksumIEEE([]byte(op.Key))
+	for _, op := range tx.writeSet {
+		checksum := crc32.ChecksumIEEE([]byte(op.record.key))
 
 		// serialize data
 		size := serialize(buf, idx, op, checksum)
 		idx += size
 	}
-	if _, err := tx.WalFile.Write(buf); err != nil {
+
+	tx.db.walMu.Lock()
+	if _, err := tx.db.wALFile.Write(buf); err != nil {
 		log.Fatal(err)
 	}
-	if err := tx.WalFile.Sync(); err != nil {
+	if err := tx.db.wALFile.Sync(); err != nil {
 		log.Println("cannot sync wal-file")
 	}
+	tx.db.walMu.Unlock()
+}
+
+// read all data in db-memory
+func readAll(index Index) {
+	fmt.Println("key		| value")
+	fmt.Println("----------------------------")
+	for k, v := range index {
+		fmt.Printf("%s		| %s\n", k, v.value)
+	}
+	fmt.Println("----------------------------")
 }
