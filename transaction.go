@@ -8,6 +8,13 @@ import (
 	"log"
 )
 
+const (
+	InReadSet = 1 + iota
+	InWriteSet
+	InIndex
+	NotExist
+)
+
 type Record struct {
 	key     string
 	value   string
@@ -48,77 +55,78 @@ func (tx *Tx) DestructTx() { // TODO:
 }
 
 func (tx *Tx) Read(key string) error {
-	record, _, err := tx.checkExistence(key)
-	if err != nil {
-		return err
+	record, where := tx.checkExistence(key)
+	switch where {
+	case InReadSet:
+		fmt.Println(record.value)
+	case InWriteSet:
+		fmt.Println(record.value)
+	case InIndex:
+		if !record.mu.TryRLock() {
+			tx.Abort()
+		}
+		tx.readSet[record.key] = record
+	case NotExist:
+		return errors.New("key doesn't exist")
 	}
-
-	if !record.mu.TryRLock() {
-		tx.Abort()
-	}
-
-	tx.readSet[record.key] = record
-	fmt.Println(record.value)
 	return nil
 }
 
 func (tx *Tx) Insert(key, value string) error {
 	record := Record{key, value, new(rwuMutex.RWUMutex), false}
-	if _, _, err := tx.checkExistence(key); err == nil {
+	if _, where := tx.checkExistence(key); where != NotExist {
 		return errors.New("key already exists")
 	}
-
 	if !record.mu.TryLock() {
 		tx.Abort()
 	}
-
 	tx.writeSet[key] = &Operation{INSERT, &record}
 	return nil
 }
 
 func (tx *Tx) Update(key, value string) error {
-	record, inReadSet, err := tx.checkExistence(key)
-	if err != nil {
-		return err
-	}
-
-	if inReadSet {
+	record, where := tx.checkExistence(key)
+	switch where {
+	case InReadSet:
 		if !record.mu.TryUpgrade() {
 			tx.Abort()
 		}
-	} else {
+	case InWriteSet:
+		//
+	case InIndex:
 		if !record.mu.TryLock() {
 			tx.Abort()
 		}
+	case NotExist:
+		return errors.New("key doesn't exist")
 	}
-
 	record.value = value
 	tx.writeSet[key] = &Operation{UPDATE, record}
 	return nil
 }
 
 func (tx *Tx) Delete(key string) error {
-	record, inReadSet, err := tx.checkExistence(key)
-	if err != nil {
-		return err
-	}
-
-	if inReadSet {
+	record, where := tx.checkExistence(key)
+	switch where {
+	case InReadSet:
 		if !record.mu.TryUpgrade() {
 			tx.Abort()
 		}
-	} else {
+	case InWriteSet:
+		//
+	case InIndex:
 		if !record.mu.TryLock() {
 			tx.Abort()
 		}
+	case NotExist:
+		return errors.New("key doesn't exist")
 	}
-
 	record.value = ""
 	tx.writeSet[key] = &Operation{DELETE, record}
 	return nil
 }
 
-func (tx *Tx) Commit() { // TODO: lockの場所適切？
+func (tx *Tx) Commit() {
 	// unlock all read lock
 	for _, record := range tx.readSet {
 		record.mu.RUnlock()
@@ -162,24 +170,26 @@ func (tx *Tx) Abort() {
 	// delete read/write-set
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
+
+	fmt.Println("Abort!")
 }
 
-func (tx *Tx) checkExistence(key string) (*Record, bool, error) {
+func (tx *Tx) checkExistence(key string) (*Record, uint) {
 	// check write-set
 	for _, op := range tx.writeSet {
 		if op.cmd != DELETE && key == op.record.key {
-			return op.record, false, nil
+			return op.record, InWriteSet
 		}
 	}
 	// check read-set
 	if record, exist := tx.readSet[key]; exist {
-		return record, true, nil
+		return record, InReadSet
 	}
 	// check index
 	if record, exist := tx.db.index[key]; exist && !record.deleted {
-		return &record, false, nil
+		return &record, InIndex
 	}
-	return nil, false, errors.New("key not exists")
+	return nil, NotExist
 }
 
 func (tx *Tx) SaveWal()  {
