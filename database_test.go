@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"log"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestDB_LoadData(t *testing.T) {
 
 	// crash recovery (db-file -> db-memory)
 	db.loadData()
-	if len(db.index) != 3 || db.index["test1"].value != "value1" {
+	if record, _ := db.index.Load("test1"); record.(Record).value != "value1" {
 		t.Error("failed to load data")
 	}
 }
@@ -35,13 +36,10 @@ func TestDB_LoadWal(t *testing.T) {
 
 	// crash recovery (wal-file -> db-memory)
 	db.loadWal()
-	if len(db.index) != 2 {
-		t.Error("failed to load wal (insert or delete log)")
-	}
-	if _, exist := db.index["test4"]; exist != true {
+	if _, exist := db.index.Load("test4"); exist != true {
 		t.Error("failed to insert")
 	}
-	if record, exist := db.index["test3"]; exist == false || record.value != "new_value3" {
+	if record, exist := db.index.Load("test3"); exist == false || record.(Record).value != "new_value3" {
 		t.Error("failed to update")
 	}
 }
@@ -106,6 +104,6 @@ func NewTestDB() *DB {
 	return &DB{
 		wALFile: walFile,
 		dBFile:  dbFile,
-		index:   make(Index),
+		index:   sync.Map{},
 	}
 }

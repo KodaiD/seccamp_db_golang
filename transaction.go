@@ -6,6 +6,7 @@ import (
 	"github.com/KodaiD/rwumutex"
 	"hash/crc32"
 	"log"
+	"sync"
 )
 
 const (
@@ -145,16 +146,16 @@ func (tx *Tx) Commit() {
 	for _, op := range tx.writeSet {
 		switch op.cmd {
 		case INSERT:
-			tx.db.index[op.record.key] = *op.record
+			tx.db.index.Store(op.record.key, *op.record)
 			op.record.mu.Unlock()
 		case UPDATE:
-			tx.db.index[op.record.key] = *op.record
+			tx.db.index.Store(op.record.key, *op.record)
 			op.record.mu.Unlock()
 		case DELETE:
 			// delete(tx.db.index, op.record.key) これはまずい
 			// 論理 delete
 			op.record.deleted = true
-			tx.db.index[op.record.key] = *op.record
+			tx.db.index.Store(op.record.key, *op.record)
 			op.record.mu.Unlock()
 		}
 	}
@@ -192,8 +193,11 @@ func (tx *Tx) checkExistence(key string) (*Record, uint) {
 		return record, InReadSet
 	}
 	// check index
-	if record, exist := tx.db.index[key]; exist && !record.deleted {
-		return &record, InIndex
+	if v, exist := tx.db.index.Load(key); exist {
+		record := v.(Record)
+		if !record.deleted {
+			return &record, InIndex
+		}
 	}
 	return nil, NotExist
 }
@@ -222,11 +226,14 @@ func (tx *Tx) SaveWal()  {
 }
 
 // read all data in db-memory
-func readAll(index Index) {
+func readAll(index *sync.Map) {
 	fmt.Println("key		| value")
 	fmt.Println("----------------------------")
-	for k, v := range index {
-		fmt.Printf("%s		| %s\n", k, v.value)
-	}
+	index.Range(func(k, v interface{}) bool {
+		key := k.(string)
+		record := v.(Record)
+		fmt.Printf("%s		| %s\n", key, record.value)
+		return true
+	})
 	fmt.Println("----------------------------")
 }
