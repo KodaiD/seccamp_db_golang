@@ -68,7 +68,13 @@ func (tx *Tx) Read(key string) error {
 			return errors.New("abort")
 		}
 		tx.readSet[record.key] = record
-	case NotExist:
+	case NotExist: // prevent phantom read
+		record = &Record{key, "", new(rwuMutex.RWUMutex), true}
+		if !record.mu.TryRLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+		tx.db.index.Store(record.key, record)
 		return errors.New("key doesn't exist")
 	}
 	return nil
@@ -134,6 +140,8 @@ func (tx *Tx) Delete(key string) error {
 }
 
 func (tx *Tx) Commit() {
+	// serialization point
+
 	// unlock all read lock
 	for _, record := range tx.readSet {
 		record.mu.RUnlock()
@@ -202,7 +210,7 @@ func (tx *Tx) checkExistence(key string) (*Record, uint) {
 	return nil, NotExist
 }
 
-func (tx *Tx) SaveWal()  {
+func (tx *Tx) SaveWal() {
 	// make redo log
 	buf := make([]byte, 4096)
 	idx := uint(0) // 書き込み開始位置

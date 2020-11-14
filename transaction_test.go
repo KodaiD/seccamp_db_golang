@@ -70,6 +70,9 @@ func TestPattern2(t *testing.T) {
 	}
 }
 
+// 2 tx 2 record
+// sleep
+
 func TestLogicalDelete(t *testing.T) {
 	db := NewTestDB()
 	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
