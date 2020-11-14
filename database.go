@@ -51,7 +51,7 @@ func NewDB(walFileName, dbFileName string) *DB {
 func (db *DB) Shutdown() {
 	fmt.Println("shut down...")
 
-	// batch 物理 delete
+	// 物理 delete
 	db.index.Range(func(k, v interface{}) bool {
 		record := v.(Record)
 		if record.deleted {

@@ -13,6 +13,7 @@ const (
 	InReadSet = 1 + iota
 	InWriteSet
 	InIndex
+	Deleted
 	NotExist
 )
 
@@ -68,29 +69,38 @@ func (tx *Tx) Read(key string) error {
 			return errors.New("abort")
 		}
 		tx.readSet[record.key] = record
+	case Deleted:
+		return errors.New("key doesn't exist")
 	case NotExist: // prevent phantom read
 		record = &Record{key, "", new(rwuMutex.RWUMutex), true}
 		if !record.mu.TryRLock() {
 			tx.Abort()
 			return errors.New("abort")
 		}
-		tx.db.index.Store(record.key, record)
+		tx.db.index.Store(record.key, *record)
 		return errors.New("key doesn't exist")
 	}
 	return nil
 }
 
 func (tx *Tx) Insert(key, value string) error {
-	record := Record{key, value, new(rwuMutex.RWUMutex), false}
-	if _, where := tx.checkExistence(key); where != NotExist {
-		return errors.New("key already exists")
+	record, where := tx.checkExistence(key)
+	if where == Deleted {
+		if !record.mu.TryLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
 	}
-	if !record.mu.TryLock() {
-		tx.Abort()
-		return errors.New("abort")
+	if where == NotExist {
+		record := Record{key, value, new(rwuMutex.RWUMutex), false}
+		if !record.mu.TryLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+		tx.writeSet[key] = &Operation{INSERT, &record}
+		return nil
 	}
-	tx.writeSet[key] = &Operation{INSERT, &record}
-	return nil
+	return errors.New("key already exists")
 }
 
 func (tx *Tx) Update(key, value string) error {
@@ -108,6 +118,8 @@ func (tx *Tx) Update(key, value string) error {
 			tx.Abort()
 			return errors.New("abort")
 		}
+	case Deleted:
+		return errors.New("key doesn't exist")
 	case NotExist:
 		return errors.New("key doesn't exist")
 	}
@@ -131,6 +143,8 @@ func (tx *Tx) Delete(key string) error {
 			tx.Abort()
 			return errors.New("abort")
 		}
+	case Deleted:
+		return errors.New("key doesn't exist")
 	case NotExist:
 		return errors.New("key doesn't exist")
 	}
@@ -203,9 +217,10 @@ func (tx *Tx) checkExistence(key string) (*Record, uint) {
 	// check index
 	if v, exist := tx.db.index.Load(key); exist {
 		record := v.(Record)
-		if !record.deleted {
-			return &record, InIndex
+		if record.deleted {
+			return &record, Deleted
 		}
+		return &record, InIndex
 	}
 	return nil, NotExist
 }
