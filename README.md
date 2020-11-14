@@ -1,6 +1,8 @@
 # seccamp_db_golang
-## trivial scheduler
+## DBMS with S2PL (single thread)
 Small key-value-store written in Go.
+- S2PL
+- no-wait
 
 ### Build and Run
 ```bash
