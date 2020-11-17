@@ -1,5 +1,5 @@
 # seccamp_db_golang
-## DBMS with S2PL (single thread)
+## DBMS with S2PL (multi thread)
 Small key-value-store written in Go.
 - S2PL
 - no-wait
