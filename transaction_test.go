@@ -44,8 +44,38 @@ func TestPattern1(t *testing.T) {
 // 2 tx (parallel)
 func TestPattern2(t *testing.T) {
 	db := NewTestDB()
-	db.index["key1"] = Record{"key1", "value1", new(rwuMutex.RWUMutex), false}
-	db.index["key2"] = Record{"key2", "value2", new(rwuMutex.RWUMutex), false}
+	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
+	db.index.Store("key2", Record{"key2", "value2", new(rwuMutex.RWUMutex), false})
+
+	tx1 := NewTx(1, db)
+	tx2 := NewTx(2, db)
+
+	if err := tx1.Read("key1"); err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+	if err := tx2.Read("key1"); err != nil {
+		t.Fatalf("cannot get read lock: %v", err)
+	}
+	if err := tx1.Insert("key3", "value3"); err != nil {
+		t.Fatalf("failed to insert: %v", err)
+	}
+	if err := tx2.Read("key3"); err == nil {
+		t.Fatalf("write lock exist, should be failed: %v", err)
+	}
+	if err := tx1.Update("key2", "new_value2"); err != nil {
+		t.Fatalf("failed to update: %v", err)
+	}
+	if err := tx2.Update("key2", "new_new_value"); err == nil {
+		t.Fatalf("write lock exist, should be failed: %v", err)
+	}
+}
+
+// 2 tx 2 record
+// sleep
+func TestPattern3(t *testing.T) {
+	db := NewTestDB()
+	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
+	db.index.Store("key2", Record{"key2", "value2", new(rwuMutex.RWUMutex), false})
 
 	tx1 := NewTx(1, db)
 	tx2 := NewTx(2, db)
@@ -72,7 +102,7 @@ func TestPattern2(t *testing.T) {
 
 func TestLogicalDelete(t *testing.T) {
 	db := NewTestDB()
-	db.index["key1"] = Record{"key1", "value1", new(rwuMutex.RWUMutex), false}
+	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
 
 	tx1 := NewTx(1, db)
 	tx2 := NewTx(2, db)
@@ -84,8 +114,15 @@ func TestLogicalDelete(t *testing.T) {
 		t.Fatalf("write lock exist, should be failed: %v", err)
 	}
 	tx1.Commit()
-	if len(db.index) != 1 && !db.index["key1"].deleted {
+	if record, exist := db.index.Load("key1"); exist && !record.(Record).deleted {
 		t.Fatal("logical delete failed")
+	}
+
+	if err := tx1.Read("key2"); err == nil {
+		t.Fatal("should be failed")
+	}
+	if err := tx2.Insert("key2", "value2"); err == nil {
+		t.Fatal("should be failed")
 	}
 }
 
@@ -119,7 +156,7 @@ func TestTx_Read(t *testing.T) {
 
 	// record in Index
 	tx.writeSet = make(WriteSet)
-	tx.db.index["test_read"] = Record{"test_read", "ans", new(rwuMutex.RWUMutex), false}
+	tx.db.index.Store("test_read", Record{"test_read", "ans", new(rwuMutex.RWUMutex), false})
 	if err := tx.Read("test_read"); err != nil {
 		t.Errorf("failed to read data in Index: %v", err)
 	}
@@ -205,13 +242,10 @@ func TestTx_Commit(t *testing.T) {
 
 	tx.Commit()
 
-	if len(tx.db.index) != 2 {
-		t.Error("not committed")
-	}
-	if tx.db.index["test_commit1"].value != "new_ans" {
+	if record, exist := tx.db.index.Load("test_commit1"); exist && record.(Record).value != "new_ans" {
 		t.Error("update log is not committed")
 	}
-	if tx.db.index["test_commit2"].deleted != true {
+	if record, exist := tx.db.index.Load("test_commit2"); exist && record.(Record).deleted != true {
 		t.Error("update log is not committed")
 	}
 	if len(tx.writeSet) != 0 {

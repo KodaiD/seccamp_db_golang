@@ -6,12 +6,14 @@ import (
 	"github.com/KodaiD/rwumutex"
 	"hash/crc32"
 	"log"
+	"sync"
 )
 
 const (
 	InReadSet = 1 + iota
 	InWriteSet
 	InIndex
+	Deleted
 	NotExist
 )
 
@@ -67,23 +69,38 @@ func (tx *Tx) Read(key string) error {
 			return errors.New("abort")
 		}
 		tx.readSet[record.key] = record
-	case NotExist:
+	case Deleted:
+		return errors.New("key doesn't exist")
+	case NotExist: // prevent phantom read
+		record = &Record{key, "", new(rwuMutex.RWUMutex), true}
+		if !record.mu.TryRLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+		tx.db.index.Store(record.key, *record)
 		return errors.New("key doesn't exist")
 	}
 	return nil
 }
 
 func (tx *Tx) Insert(key, value string) error {
-	record := Record{key, value, new(rwuMutex.RWUMutex), false}
-	if _, where := tx.checkExistence(key); where != NotExist {
-		return errors.New("key already exists")
+	record, where := tx.checkExistence(key)
+	if where == Deleted {
+		if !record.mu.TryLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
 	}
-	if !record.mu.TryLock() {
-		tx.Abort()
-		return errors.New("abort")
+	if where == NotExist {
+		record := Record{key, value, new(rwuMutex.RWUMutex), false}
+		if !record.mu.TryLock() {
+			tx.Abort()
+			return errors.New("abort")
+		}
+		tx.writeSet[key] = &Operation{INSERT, &record}
+		return nil
 	}
-	tx.writeSet[key] = &Operation{INSERT, &record}
-	return nil
+	return errors.New("key already exists")
 }
 
 func (tx *Tx) Update(key, value string) error {
@@ -101,6 +118,8 @@ func (tx *Tx) Update(key, value string) error {
 			tx.Abort()
 			return errors.New("abort")
 		}
+	case Deleted:
+		return errors.New("key doesn't exist")
 	case NotExist:
 		return errors.New("key doesn't exist")
 	}
@@ -124,6 +143,8 @@ func (tx *Tx) Delete(key string) error {
 			tx.Abort()
 			return errors.New("abort")
 		}
+	case Deleted:
+		return errors.New("key doesn't exist")
 	case NotExist:
 		return errors.New("key doesn't exist")
 	}
@@ -133,6 +154,8 @@ func (tx *Tx) Delete(key string) error {
 }
 
 func (tx *Tx) Commit() {
+	// serialization point
+
 	// unlock all read lock
 	for _, record := range tx.readSet {
 		record.mu.RUnlock()
@@ -145,16 +168,16 @@ func (tx *Tx) Commit() {
 	for _, op := range tx.writeSet {
 		switch op.cmd {
 		case INSERT:
-			tx.db.index[op.record.key] = *op.record
+			tx.db.index.Store(op.record.key, *op.record)
 			op.record.mu.Unlock()
 		case UPDATE:
-			tx.db.index[op.record.key] = *op.record
+			tx.db.index.Store(op.record.key, *op.record)
 			op.record.mu.Unlock()
 		case DELETE:
 			// delete(tx.db.index, op.record.key) これはまずい
 			// 論理 delete
 			op.record.deleted = true
-			tx.db.index[op.record.key] = *op.record
+			tx.db.index.Store(op.record.key, *op.record)
 			op.record.mu.Unlock()
 		}
 	}
@@ -192,13 +215,17 @@ func (tx *Tx) checkExistence(key string) (*Record, uint) {
 		return record, InReadSet
 	}
 	// check index
-	if record, exist := tx.db.index[key]; exist && !record.deleted {
+	if v, exist := tx.db.index.Load(key); exist {
+		record := v.(Record)
+		if record.deleted {
+			return &record, Deleted
+		}
 		return &record, InIndex
 	}
 	return nil, NotExist
 }
 
-func (tx *Tx) SaveWal()  {
+func (tx *Tx) SaveWal() {
 	// make redo log
 	buf := make([]byte, 4096)
 	idx := uint(0) // 書き込み開始位置
@@ -222,11 +249,14 @@ func (tx *Tx) SaveWal()  {
 }
 
 // read all data in db-memory
-func readAll(index Index) {
+func readAll(index *sync.Map) {
 	fmt.Println("key		| value")
 	fmt.Println("----------------------------")
-	for k, v := range index {
-		fmt.Printf("%s		| %s\n", k, v.value)
-	}
+	index.Range(func(k, v interface{}) bool {
+		key := k.(string)
+		record := v.(Record)
+		fmt.Printf("%s		| %s\n", key, record.value)
+		return true
+	})
 	fmt.Println("----------------------------")
 }

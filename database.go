@@ -28,11 +28,8 @@ type DB struct {
 	walMu   sync.Mutex
 	wALFile *os.File
 	dBFile  *os.File
-	index   Index
+	index   sync.Map
 }
-
-type Index map[string]Record
-
 
 func NewDB(walFileName, dbFileName string) *DB {
 	walFile, err := os.OpenFile(walFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
@@ -47,19 +44,21 @@ func NewDB(walFileName, dbFileName string) *DB {
 	return &DB{
 		wALFile: walFile,
 		dBFile:  dbFile,
-		index:   make(Index),
+		index:   sync.Map{},
 	}
 }
 
 func (db *DB) Shutdown() {
 	fmt.Println("shut down...")
 
-	// batch 物理 delete
-	for _, record := range db.index {
+	// 物理 delete
+	db.index.Range(func(k, v interface{}) bool {
+		record := v.(Record)
 		if record.deleted {
-			delete(db.index, record.key)
+			db.index.Delete(record.key)
 		}
-	}
+		return true
+	})
 
 	// db-memory -> DB-file
 	db.saveData()
@@ -146,7 +145,7 @@ func (db *DB) StartTx(reader io.Reader) {
 				tx.DestructTx()
 				return
 			case "all":
-				readAll(db.index) // TODO:
+				readAll(&db.index) // TODO:
 			default:
 				fmt.Println("command not supported")
 			}
@@ -178,11 +177,11 @@ func (db *DB) loadWal() {
 
 			switch op.cmd {
 			case INSERT:
-				db.index[op.record.key] = *op.record
+				db.index.Store(op.record.key, *op.record)
 			case UPDATE:
-				db.index[op.record.key] = *op.record
+				db.index.Store(op.record.key, *op.record)
 			case DELETE:
-				delete(db.index, op.record.key)
+				db.index.Delete(op.record.key)
 			}
 
 			idx += size
@@ -224,13 +223,16 @@ func (db *DB) saveData() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for key, record := range db.index {
+	db.index.Range(func(k, v interface{}) bool {
+		key := k.(string)
+		record := v.(Record)
 		line := key + " " + record.value + "\n"
 		_, err := tmpFile.WriteString(line)
 		if err != nil {
 			log.Println(err)
 		}
-	}
+		return true
+	})
 	if err = tmpFile.Sync(); err != nil {
 		log.Fatal(err)
 	}
@@ -255,7 +257,7 @@ func (db *DB) loadData() {
 		}
 		key := line[0]
 		value := line[1]
-		db.index[key] = Record{key, value, new(rwuMutex.RWUMutex), false}
+		db.index.Store(key, Record{key, value, new(rwuMutex.RWUMutex), false})
 		fmt.Println("recovering...")
 	}
 }

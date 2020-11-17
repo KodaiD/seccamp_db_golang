@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"sync"
 )
 
@@ -38,7 +37,6 @@ const (
 )
 
 func main() {
-	runtime.GOMAXPROCS(1) // single thread
 	fmt.Println("starting seccampdb...")
 
 	db := NewDB(WALFileName, DBFileName)
