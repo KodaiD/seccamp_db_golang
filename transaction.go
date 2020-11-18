@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"log"
 	"sync"
+	"time"
 )
 
 const (
@@ -18,30 +19,36 @@ const (
 )
 
 type Record struct {
-	key     string
-	value   string
-	mu      *rwuMutex.RWUMutex
-	deleted bool // db-memory
+	key 	string
+	version []*Version
+}
+
+type Version struct {
+	key   string
+	value string
+	wTs   uint
+	rTs   uint
+	mu    sync.Mutex
 }
 
 type Operation struct {
 	cmd    uint
-	record *Record
+	version *Version
 }
 
 type WriteSet map[string]*Operation
-type ReadSet map[string]*Record
+type ReadSet map[string]*Version
 
 type Tx struct {
-	id       uint
+	ts       uint
 	writeSet WriteSet
 	readSet  ReadSet
 	db       *DB
 }
 
-func NewTx(id uint, db *DB) *Tx {
+func NewTx(ts uint, db *DB) *Tx {
 	return &Tx{
-		id:       id,
+		ts:       ts,
 		writeSet: make(WriteSet),
 		readSet:  make(ReadSet),
 		db:       db,
@@ -56,102 +63,93 @@ func (tx *Tx) DestructTx() {
 	}
 }
 
-func (tx *Tx) Read(key string) error {
+func (tx *Tx) Read(key string) (string, error) {
 	record, where := tx.checkExistence(key)
-	switch where {
-	case InReadSet:
-		fmt.Println(record.value)
-	case InWriteSet:
-		fmt.Println(record.value)
-	case InIndex:
-		if !record.mu.TryRLock() {
-			tx.Abort()
-			return errors.New("abort")
+	if where == InReadSet || where == InWriteSet || where == InIndex {
+		v := record.version[len(record.version)-1]
+		v.mu.Lock()
+		if record.version[len(record.version)-1].rTs < tx.ts {
+			record.version[len(record.version)-1].rTs = tx.ts
 		}
-		tx.readSet[record.key] = record
-	case Deleted:
-		return errors.New("key doesn't exist")
-	case NotExist: // prevent phantom read
-		record = &Record{key, "", new(rwuMutex.RWUMutex), true}
-		if !record.mu.TryRLock() {
-			tx.Abort()
-			return errors.New("abort")
-		}
-		tx.db.index.Store(record.key, *record)
-		return errors.New("key doesn't exist")
+		tx.readSet[record.key] = v
+		v.mu.Unlock()
+		return v.value, nil
+	} else {
+		return "", errors.New("key doesn't exist")
 	}
-	return nil
 }
 
 func (tx *Tx) Insert(key, value string) error {
-	record, where := tx.checkExistence(key)
-	if where == Deleted {
-		if !record.mu.TryLock() {
-			tx.Abort()
-			return errors.New("abort")
+	_, where := tx.checkExistence(key)
+	if where == NotExist || where == Deleted {
+		v := Version {
+			key:   key,
+			value: value,
+			wTs:   tx.ts,
+			rTs:   tx.ts,
+			mu:    sync.Mutex{},
 		}
+		tx.writeSet[key] = &Operation{cmd: INSERT, version: &v}
+	} else {
+		return errors.New("key already exists")
 	}
-	if where == NotExist {
-		record := Record{key, value, new(rwuMutex.RWUMutex), false}
-		if !record.mu.TryLock() {
-			tx.Abort()
-			return errors.New("abort")
-		}
-		tx.writeSet[key] = &Operation{INSERT, &record}
-		return nil
-	}
-	return errors.New("key already exists")
 }
 
 func (tx *Tx) Update(key, value string) error {
 	record, where := tx.checkExistence(key)
-	switch where {
-	case InReadSet:
-		if !record.mu.TryUpgrade() {
-			tx.Abort()
-			return errors.New("abort")
+	if where == InReadSet || where == InWriteSet || where == InIndex {
+		v := record.version[len(record.version)-1]
+		v.mu.Lock()
+		if tx.ts < v.rTs {
+			// rollback()
+		} else if tx.ts == v.wTs {
+			v.value = value
+		} else if tx.ts > v.rTs {
+			newV := &Version{
+				key:   key,
+				value: value,
+				wTs:   tx.ts,
+				rTs:   tx.ts,
+			}
+			record.version = append(record.version, newV)
+			v = newV
 		}
-	case InWriteSet:
-		//
-	case InIndex:
-		if !record.mu.TryLock() {
-			tx.Abort()
-			return errors.New("abort")
-		}
-	case Deleted:
-		return errors.New("key doesn't exist")
-	case NotExist:
+		tx.writeSet[key] = &Operation{UPDATE, v}
+		v.mu.Unlock()
+		return nil
+	} else {
 		return errors.New("key doesn't exist")
 	}
-	record.value = value
-	tx.writeSet[key] = &Operation{UPDATE, record}
-	return nil
 }
 
 func (tx *Tx) Delete(key string) error {
 	record, where := tx.checkExistence(key)
-	switch where {
-	case InReadSet:
-		if !record.mu.TryUpgrade() {
-			tx.Abort()
-			return errors.New("abort")
+	if where == InReadSet || where == InWriteSet || where == InIndex {
+		v := record.version[len(record.version)-1]
+		v.mu.Lock()
+		if tx.ts < v.rTs {
+			// rollback()
+		} else if tx.ts == v.wTs {
+			v.value = ""
+		} else if tx.ts > v.rTs {
+			newV := &Version{
+				key:   key,
+				value: "",
+				wTs:   tx.ts,
+				rTs:   tx.ts,
+			}
+			record.version = append(record.version, newV)
+			v = newV
 		}
-	case InWriteSet:
-		//
-	case InIndex:
-		if !record.mu.TryLock() {
-			tx.Abort()
-			return errors.New("abort")
-		}
-	case Deleted:
-		return errors.New("key doesn't exist")
-	case NotExist:
+		tx.writeSet[key] = &Operation{DELETE, v}
+		v.mu.Unlock()
+		return nil
+	} else {
 		return errors.New("key doesn't exist")
 	}
-	record.value = ""
-	tx.writeSet[key] = &Operation{DELETE, record}
-	return nil
 }
+
+// =====================================================
 
 func (tx *Tx) Commit() {
 	// serialization point

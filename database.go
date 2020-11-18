@@ -103,9 +103,11 @@ func (db *DB) StartTx(reader io.Reader) {
 					continue
 				}
 				key := input[1]
-				if err := tx.Read(key); err != nil {
+				value, err := tx.Read(key)
+				if err != nil {
 					log.Println(err)
 				}
+				fmt.Println(value)
 			case "insert":
 				if len(input) != 3 {
 					fmt.Println("wrong format -> insert <key> <value>")

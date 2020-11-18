@@ -1,7 +1,7 @@
 # seccamp_db_golang
-## DBMS with S2PL (multi thread)
+## DBMS with MVTO
 Small key-value-store written in Go.
-- S2PL
+- multi version timestamp ordering
 - no-wait
 
 ### Build and Run
