@@ -23,7 +23,7 @@ func TestDB_LoadData(t *testing.T) {
 
 	// crash recovery (db-file -> db-memory)
 	db.loadData()
-	if record, _ := db.index.data["test1"]; record.last.value != "value1" {
+	if record, _ := db.index.Load("test1"); record.(Record).last.value != "value1" {
 		t.Error("failed to load data")
 	}
 }
@@ -58,29 +58,28 @@ func TestDB_LoadWal(t *testing.T) {
 		next:  nil,
 		mu:    nil,
 	}
-
-	db.index.data["key1"] = Record{
+	db.index.Store("key1", Record{
 		key:   "key1",
 		first: v1,
 		last:  v1,
-	}
-	db.index.data["key2"] = Record{
+	})
+	db.index.Store("key2", Record{
 		key:   "key2",
 		first: v2,
 		last:  v2,
-	}
-	db.index.data["key3"] = Record{
+	})
+	db.index.Store("key3", Record{
 		key:   "key3",
 		first: v3,
 		last:  v3,
-	}
+	})
 
 	// crash recovery (wal-file -> db-memory)
 	db.loadWal()
-	if _, exist := db.index.data["test4"]; exist != true {
+	if _, exist := db.index.Load("test4"); !exist {
 		t.Error("failed to insert")
 	}
-	if record, exist := db.index.data["test3"]; exist == false || record.last.value != "new_value3" {
+	if v, exist := db.index.Load("test3"); !exist || v.(Record).last.value != "new_value3" {
 		t.Error("failed to update")
 	}
 }
@@ -146,6 +145,6 @@ func NewTestDB() *DB {
 	return &DB{
 		wALFile: walFile,
 		dBFile:  dbFile,
-		index:   Index{make(map[string]Record), new(sync.RWMutex)},
+		index:   sync.Map{},
 	}
 }

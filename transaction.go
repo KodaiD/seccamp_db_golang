@@ -165,9 +165,7 @@ func (tx *Tx) Commit() {
 	tx.SaveWal()
 
 	// write-set -> db-memory
-	tx.db.index.mu.Lock()
 	// write操作
-
 	for _, op := range tx.writeSet {
 		switch op.cmd {
 		case INSERT:
@@ -176,15 +174,18 @@ func (tx *Tx) Commit() {
 				first: op.version,
 				last:  op.version,
 			}
-			tx.db.index.data[op.version.key] = record
+			tx.db.index.Store(op.version.key, record)
 		case UPDATE:
-			record := tx.db.index.data[op.version.key]
+			v, exist := tx.db.index.Load(op.version.key)
+			if !exist {
+				log.Println("failed to commit update log")
+			}
+			record := v.(Record)
 			record.last = op.version
 		case DELETE:
-			delete(tx.db.index.data, op.version.key)
+			tx.db.index.Delete(op.version.key)
 		}
 	}
-	tx.db.index.mu.Unlock()
 
 	// delete read/write-set
 	tx.writeSet = make(WriteSet)
@@ -212,12 +213,13 @@ func (tx *Tx) checkExistence(key string) (*Version, uint) {
 	}
 
 	// check index
-	tx.db.index.mu.Lock()
-	if record, exist := tx.db.index.data[key]; exist {
+	if v, exist := tx.db.index.Load(key); exist {
+		record := v.(Record)
+		//if record.deleted {
+		//	return &record, Deleted
+		//}
 		return record.last, InIndex
 	}
-	tx.db.index.mu.Unlock()
-
 	return nil, NotExist
 }
 
@@ -245,11 +247,14 @@ func (tx *Tx) SaveWal() {
 }
 
 // read all data in db-memory
-func readAll(index *Index) {
+func readAll(index *sync.Map) {
 	fmt.Println("key		| value")
 	fmt.Println("----------------------------")
-	for key, record := range index.data {
+	index.Range(func(k, v interface{}) bool {
+		key := k.(string)
+		record := v.(Record)
 		fmt.Printf("%s		| %s\n", key, record.last.value)
-	}
+		return true
+	})
 	fmt.Println("----------------------------")
 }

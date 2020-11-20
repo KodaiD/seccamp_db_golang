@@ -26,12 +26,7 @@ type DB struct {
 	walMu   sync.Mutex
 	wALFile *os.File
 	dBFile  *os.File
-	index   Index
-}
-
-type Index struct {
-	data map[string]Record
-	mu   *sync.RWMutex
+	index   sync.Map
 }
 
 func NewDB(walFileName, dbFileName string) *DB {
@@ -47,7 +42,7 @@ func NewDB(walFileName, dbFileName string) *DB {
 	return &DB{
 		wALFile: walFile,
 		dBFile:  dbFile,
-		index:   Index{make(map[string]Record), new(sync.RWMutex)},
+		index:   sync.Map{},
 	}
 }
 
@@ -174,19 +169,21 @@ func (db *DB) loadWal() {
 
 			switch op.cmd {
 			case INSERT:
-				db.index.data[op.version.key] = Record{
+				record := Record{
 					key:   op.version.key,
 					first: op.version,
 					last:  op.version,
 				}
+				db.index.Store(op.version.key, record)
 			case UPDATE:
-				db.index.data[op.version.key] = Record{
+				record := Record{
 					key:   op.version.key,
 					first: op.version,
 					last:  op.version,
 				}
+				db.index.Store(op.version.key, record)
 			case DELETE:
-				delete(db.index.data, op.version.key)
+				db.index.Delete(op.version.key)
 			}
 			idx += size
 		}
@@ -234,13 +231,16 @@ func (db *DB) saveData() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for key, record := range db.index.data {
+	db.index.Range(func(k, v interface{}) bool {
+		key := k.(string)
+		record := v.(Record)
 		line := key + " " + record.last.value + "\n"
 		_, err := tmpFile.WriteString(line)
 		if err != nil {
 			log.Println(err)
 		}
-	}
+		return true
+	})
 	if err = tmpFile.Sync(); err != nil {
 		log.Fatal(err)
 	}
@@ -273,11 +273,11 @@ func (db *DB) loadData() {
 			next:  nil,
 			mu:    new(sync.Mutex),
 		}
-		db.index.data[key] = Record{
+		db.index.Store(key, Record{
 			key:   key,
 			first: version,
 			last:  version,
-		}
+		})
 		fmt.Println("recovering...")
 	}
 }

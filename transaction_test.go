@@ -186,11 +186,11 @@ func TestTx_Read(t *testing.T) {
 		next:  nil,
 		mu:    new(sync.Mutex),
 	}
-	tx.db.index.data["test_read"] = Record{
+	tx.db.index.Store("test_read", Record{
 		key:   "test_read",
 		first: v,
 		last:  v,
-	}
+	})
 	if value, err := tx.Read("test_read"); err != nil || value != "ans" {
 		t.Errorf("failed to read data in Index: %v\n", err)
 	}
@@ -278,16 +278,16 @@ func TestTx_Commit(t *testing.T) {
 		next:  nil,
 		mu:    new(sync.Mutex),
 	}
-	db.index.data["test_commit1"] = Record{
+	db.index.Store("test_commit1", Record{
 		key:   "test_commit1",
 		first: v1,
 		last:  v1,
-	}
-	db.index.data["test_commit1"] = Record{
-		key:   "test_commit1",
-		first: v1,
+	})
+	db.index.Store("test_commit2", Record{
+		key:   "test_commit2",
+		first: v2,
 		last:  v2,
-	}
+	})
 
 	tx := NewTx(1, db)
 	tx.writeSet["test_commit1"] = &Operation{
@@ -315,11 +315,11 @@ func TestTx_Commit(t *testing.T) {
 
 	tx.Commit()
 
-	if record, exist := tx.db.index.data["test_commit1"]; exist && record.last.value != "new_ans" {
-		t.Errorf("update log is not committed: %v", record.last.value)
+	if record, exist := tx.db.index.Load("test_commit1"); exist && record.(Record).last.value != "new_ans" {
+		t.Errorf("update log is not committed: %v", record.(Record).last.value)
 	}
-	if record, exist := tx.db.index.data["test_commit2"]; exist && record.last.value != "" {
-		t.Errorf("delete log is not committed: %v", record.last.value)
+	if record, exist := tx.db.index.Load("test_commit2"); exist && record.(Record).last.value != "" {
+		t.Errorf("delete log is not committed: %v", record.(Record).last.value)
 	}
 	if len(tx.writeSet) != 0 {
 		t.Error("write-set is not cleared")
