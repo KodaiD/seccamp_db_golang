@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"log"
 	"sync"
+	"time"
 )
 
 const (
@@ -16,6 +17,8 @@ const (
 	NotExist
 )
 
+// recordロック
+
 type Record struct {
 	key 	string
 	first *Version
@@ -23,17 +26,18 @@ type Record struct {
 }
 
 type Version struct {
-	key   string
+	key   string // 冗長
 	value string
 	wTs   uint
-	rTs   uint
-	next  *Version
-	mu    sync.Mutex
+	rTs   uint // こいつだけatomicにやるとか
+	next  *Version // TODO: previous
+	mu    *sync.Mutex
 }
 
 type Operation struct {
 	cmd    uint
 	version *Version
+	ts time.Time
 }
 
 type WriteSet map[string]*Operation
@@ -64,9 +68,13 @@ func (tx *Tx) DestructTx() {
 }
 
 func (tx *Tx) Read(key string) (string, error) {
+	// ロックは読んだらはずしていい
+	// 自分を超えないversionを読む
+	// write は最新を読む簡易化
+	// recordとってくる、ロックする、versionをtraverse（lastから）、自分より小さいversionででかいやつ、rtsアップデート、readsetにversionのポインタを入れる
 	v, where := tx.checkExistence(key)
 	if where == InReadSet || where == InWriteSet || where == InIndex {
-		v.mu.Lock()
+		v.mu.Lock() // TODO:
 		if v.rTs < tx.ts {
 			v.rTs = tx.ts
 		}
@@ -78,7 +86,7 @@ func (tx *Tx) Read(key string) (string, error) {
 	}
 }
 
-func (tx *Tx) Insert(key, value string) error {
+func (tx *Tx) Insert(key, value string) error { // TODO: 論理delete
 	_, where := tx.checkExistence(key)
 	if where == NotExist || where == Deleted {
 		v := Version {
@@ -86,7 +94,7 @@ func (tx *Tx) Insert(key, value string) error {
 			value: value,
 			wTs:   tx.ts,
 			rTs:   tx.ts,
-			mu:    sync.Mutex{},
+			mu:    new(sync.Mutex),
 		}
 		tx.writeSet[key] = &Operation{cmd: INSERT, version: &v}
 		return nil
@@ -96,11 +104,16 @@ func (tx *Tx) Insert(key, value string) error {
 }
 
 func (tx *Tx) Update(key, value string) error {
+	// commit 時に
+	// ここでやるのは
+
 	v, where := tx.checkExistence(key)
 	if where == InReadSet || where == InWriteSet || where == InIndex {
 		v.mu.Lock()
+
+
 		if tx.ts < v.rTs {
-			// rollback()
+			tx.Abort()
 		} else if tx.ts == v.wTs {
 			v.value = value
 		} else if tx.ts > v.rTs {
@@ -112,7 +125,7 @@ func (tx *Tx) Update(key, value string) error {
 			}
 			v.next = newV
 		}
-		tx.writeSet[key] = &Operation{UPDATE, v}
+		tx.writeSet[key] = &Operation{UPDATE, v, time.Now()}
 		v.mu.Unlock()
 		return nil
 	} else {
@@ -137,7 +150,7 @@ func (tx *Tx) Delete(key string) error {
 			}
 			v.next = newV
 		}
-		tx.writeSet[key] = &Operation{DELETE, v}
+		tx.writeSet[key] = &Operation{DELETE, v, time.Now()}
 		v.mu.Unlock()
 		return nil
 	} else {
@@ -153,6 +166,8 @@ func (tx *Tx) Commit() {
 
 	// write-set -> db-memory
 	tx.db.index.mu.Lock()
+	// write操作
+
 	for _, op := range tx.writeSet {
 		switch op.cmd {
 		case INSERT:

@@ -31,7 +31,7 @@ type DB struct {
 
 type Index struct {
 	data map[string]Record
-	mu   sync.RWMutex
+	mu   *sync.RWMutex
 }
 
 func NewDB(walFileName, dbFileName string) *DB {
@@ -47,7 +47,7 @@ func NewDB(walFileName, dbFileName string) *DB {
 	return &DB{
 		wALFile: walFile,
 		dBFile:  dbFile,
-		index:   Index{make(map[string]Record), sync.RWMutex{}},
+		index:   Index{make(map[string]Record), new(sync.RWMutex)},
 	}
 }
 
@@ -171,24 +171,23 @@ func (db *DB) loadWal() {
 				continue
 			}
 
+
 			switch op.cmd {
 			case INSERT:
-				record := Record{
+				db.index.data[op.version.key] = Record{
 					key:   op.version.key,
 					first: op.version,
 					last:  op.version,
 				}
-				db.index.data[op.version.key] = record
 			case UPDATE:
-				record := db.index.data[op.version.key]
-				last := record.last
-				last.next = op.version
-				record.last = op.version
+				db.index.data[op.version.key] = Record{
+					key:   op.version.key,
+					first: op.version,
+					last:  op.version,
+				}
 			case DELETE:
 				delete(db.index.data, op.version.key)
 			}
-			// TODO: 複数バージョンいらない
-
 			idx += size
 		}
 	}
@@ -222,7 +221,7 @@ func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 			wTs:   0,
 			rTs:   0,
 			next:  nil,
-			mu:    sync.Mutex{},
+			mu:    new(sync.Mutex),
 		},
 	}
 
@@ -272,7 +271,7 @@ func (db *DB) loadData() {
 			wTs:   0,
 			rTs:   0,
 			next:  nil,
-			mu:    sync.Mutex{},
+			mu:    new(sync.Mutex),
 		}
 		db.index.data[key] = Record{
 			key:   key,
