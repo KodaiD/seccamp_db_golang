@@ -10,8 +10,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-
-	"github.com/KodaiD/rwumutex"
 )
 
 // supported operation
@@ -28,7 +26,12 @@ type DB struct {
 	walMu   sync.Mutex
 	wALFile *os.File
 	dBFile  *os.File
-	index   sync.Map
+	index   Index
+}
+
+type Index struct {
+	data map[string]Record
+	mu   *sync.RWMutex
 }
 
 func NewDB(walFileName, dbFileName string) *DB {
@@ -44,21 +47,12 @@ func NewDB(walFileName, dbFileName string) *DB {
 	return &DB{
 		wALFile: walFile,
 		dBFile:  dbFile,
-		index:   sync.Map{},
+		index:   Index{make(map[string]Record), new(sync.RWMutex)},
 	}
 }
 
 func (db *DB) Shutdown() {
 	fmt.Println("shut down...")
-
-	// 物理 delete
-	db.index.Range(func(k, v interface{}) bool {
-		record := v.(Record)
-		if record.deleted {
-			db.index.Delete(record.key)
-		}
-		return true
-	})
 
 	// db-memory -> DB-file
 	db.saveData()
@@ -103,9 +97,11 @@ func (db *DB) StartTx(reader io.Reader) {
 					continue
 				}
 				key := input[1]
-				if err := tx.Read(key); err != nil {
+				value, err := tx.Read(key)
+				if err != nil {
 					log.Println(err)
 				}
+				fmt.Println(value)
 			case "insert":
 				if len(input) != 3 {
 					fmt.Println("wrong format -> insert <key> <value>")
@@ -170,32 +166,40 @@ func (db *DB) loadWal() {
 		for buf[idx] != 0 {
 			size, op, checksum := deserialize(buf, idx)
 
-			if checksum != crc32.ChecksumIEEE([]byte(op.record.key)) {
+			if checksum != crc32.ChecksumIEEE([]byte(op.version.key)) {
 				fmt.Println("load failed")
 				continue
 			}
 
+
 			switch op.cmd {
 			case INSERT:
-				db.index.Store(op.record.key, *op.record)
+				db.index.data[op.version.key] = Record{
+					key:   op.version.key,
+					first: op.version,
+					last:  op.version,
+				}
 			case UPDATE:
-				db.index.Store(op.record.key, *op.record)
+				db.index.data[op.version.key] = Record{
+					key:   op.version.key,
+					first: op.version,
+					last:  op.version,
+				}
 			case DELETE:
-				db.index.Delete(op.record.key)
+				delete(db.index.data, op.version.key)
 			}
-
 			idx += size
 		}
 	}
 }
 
 func serialize(buf []byte, idx uint, op *Operation, checksum uint32) uint {
-	size := uint(len(op.record.key) + len(op.record.value) + 7)
+	size := uint(len(op.version.key) + len(op.version.value) + 7)
 	buf[idx] = uint8(size)
-	buf[idx+1] = uint8(len(op.record.key))
+	buf[idx+1] = uint8(len(op.version.key))
 	buf[idx+2] = uint8(op.cmd)
-	copy(buf[idx+3:], op.record.key)
-	copy(buf[idx+3+uint(len(op.record.key)):], op.record.value)
+	copy(buf[idx+3:], op.version.key)
+	copy(buf[idx+3+uint(len(op.version.key)):], op.version.value)
 	binary.BigEndian.PutUint32(buf[idx+size-4:], checksum)
 
 	return size
@@ -210,8 +214,15 @@ func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 	checksum := binary.BigEndian.Uint32(buf[idx+size-4 : idx+size])
 
 	op := &Operation{
-		cmd:    cmd,
-		record: &Record{key, value, new(rwuMutex.RWUMutex), false},
+		cmd:     cmd,
+		version: &Version{
+			key:   key,
+			value: value,
+			wTs:   0,
+			rTs:   0,
+			next:  nil,
+			mu:    new(sync.Mutex),
+		},
 	}
 
 	return size, op, checksum
@@ -223,16 +234,13 @@ func (db *DB) saveData() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.index.Range(func(k, v interface{}) bool {
-		key := k.(string)
-		record := v.(Record)
-		line := key + " " + record.value + "\n"
+	for key, record := range db.index.data {
+		line := key + " " + record.last.value + "\n"
 		_, err := tmpFile.WriteString(line)
 		if err != nil {
 			log.Println(err)
 		}
-		return true
-	})
+	}
 	if err = tmpFile.Sync(); err != nil {
 		log.Fatal(err)
 	}
@@ -257,7 +265,19 @@ func (db *DB) loadData() {
 		}
 		key := line[0]
 		value := line[1]
-		db.index.Store(key, Record{key, value, new(rwuMutex.RWUMutex), false})
+		version := &Version{
+			key:   key,
+			value: value,
+			wTs:   0,
+			rTs:   0,
+			next:  nil,
+			mu:    new(sync.Mutex),
+		}
+		db.index.data[key] = Record{
+			key:   key,
+			first: version,
+			last:  version,
+		}
 		fmt.Println("recovering...")
 	}
 }
