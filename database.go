@@ -127,11 +127,13 @@ func (db *DB) StartTx(reader io.Reader) {
 					log.Println(err)
 				}
 			case "commit":
-				tx.Commit()
+				if err := tx.Commit(); err != nil {
+					log.Println(err)
+				}
 			case "abort":
 				tx.writeSet = make(WriteSet)
 				tx.readSet = make(ReadSet)
-				tx = NewTx(1, db)
+				tx = NewTx(1, db) // TODO:
 			case "exit":
 				tx.DestructTx()
 				return
@@ -217,8 +219,7 @@ func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 			value: value,
 			wTs:   0,
 			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			prev:  nil,
 		},
 	}
 
@@ -270,8 +271,7 @@ func (db *DB) loadData() {
 			value: value,
 			wTs:   0,
 			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			prev:  nil,
 		}
 		db.index.Store(key, Record{
 			key:   key,
