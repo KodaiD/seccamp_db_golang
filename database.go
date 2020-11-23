@@ -27,6 +27,7 @@ type DB struct {
 	wALFile *os.File
 	dBFile  *os.File
 	index   sync.Map
+	n       uint64
 }
 
 func NewDB(walFileName, dbFileName string) *DB {
@@ -43,6 +44,7 @@ func NewDB(walFileName, dbFileName string) *DB {
 		wALFile: walFile,
 		dBFile:  dbFile,
 		index:   sync.Map{},
+		n: 		 0,
 	}
 }
 
@@ -78,7 +80,7 @@ func (db *DB) Setup() {
 }
 
 func (db *DB) StartTx(reader io.Reader) {
-	tx := NewTx(1, db) // TODO: unique id
+	tx := NewTx(db)
 	scanner := bufio.NewScanner(reader)
 	for {
 		fmt.Print("seccampdb >> ")
@@ -131,10 +133,6 @@ func (db *DB) StartTx(reader io.Reader) {
 					log.Println(err)
 				}
 			case "abort":
-				tx.writeSet = make(WriteSet)
-				tx.readSet = make(ReadSet)
-				tx = NewTx(1, db) // TODO:
-			case "exit":
 				tx.DestructTx()
 				return
 			case "all":
@@ -207,7 +205,7 @@ func serialize(buf []byte, idx uint, op *Operation, checksum uint32) uint {
 func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 	size := uint(buf[idx])
 	keySize := uint(buf[idx+1])
-	cmd := uint(buf[idx+2])
+	cmd := buf[idx+2]
 	key := string(buf[idx+3 : idx+3+keySize])
 	value := string(buf[idx+3+keySize : idx+size-4])
 	checksum := binary.BigEndian.Uint32(buf[idx+size-4 : idx+size])

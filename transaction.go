@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"log"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -26,14 +27,14 @@ type Record struct {
 type Version struct {
 	key     string
 	value   string
-	wTs     uint
-	rTs     uint // こいつだけatomicにやるとか
+	wTs     uint64
+	rTs     uint64
 	prev    *Version
 	deleted bool
 }
 
 type Operation struct {
-	cmd     uint
+	cmd     uint8
 	version *Version
 }
 
@@ -41,15 +42,15 @@ type WriteSet map[string][]*Operation
 type ReadSet map[string]*Version
 
 type Tx struct {
-	ts       uint
+	ts       uint64
 	writeSet WriteSet
 	readSet  ReadSet
 	db       *DB
 }
 
-func NewTx(ts uint, db *DB) *Tx {
+func NewTx(db *DB) *Tx {
 	return &Tx{
-		ts:       ts,
+		ts:       atomic.AddUint64(&db.n, 1),
 		writeSet: make(WriteSet),
 		readSet:  make(ReadSet),
 		db:       db,
@@ -59,6 +60,7 @@ func NewTx(ts uint, db *DB) *Tx {
 func (tx *Tx) DestructTx() {
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
+	atomic.AddUint64(&tx.db.n, -1)
 	if err := tx.db.wALFile.Close(); err != nil {
 		log.Println(err)
 	}
@@ -182,7 +184,7 @@ func (tx *Tx) Commit() error {
 				latest := record.last
 				if tx.ts < latest.rTs {
 					rollback(history)
-					break
+					return errors.New("failed to commit")
 				} else if tx.ts >= latest.rTs {
 					op.version.prev = latest
 					record.last = op.version
