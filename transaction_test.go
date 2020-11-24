@@ -144,33 +144,33 @@ import (
 
 func TestTx_Read(t *testing.T) {
 	db := NewTestDB()
-	tx := NewTx(1, db)
+	tx := NewTx(db)
 
 	// record in read-set
 	tx.readSet["test_read"] = &Version{
-		key:   "test_read",
-		value: "ans",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    new(sync.Mutex),
+		key:     "test_read",
+		value:   "ans",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	if value, err := tx.Read("test_read"); err != nil || value != "ans" {
 		t.Errorf("failed to read data in read-set: %v\n", err)
 	}
 
 	// record in write-set
-	tx.writeSet["test_read"] = &Operation{
-		cmd:     INSERT,
+	tx.writeSet["test_read"] = append(tx.writeSet["test_read"], &Operation{
+		cmd: INSERT,
 		version: &Version{
-			key:   "test_read",
-			value: "ans",
-			wTs:   0,
-			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			key:     "test_read",
+			value:   "ans",
+			wTs:     0,
+			rTs:     0,
+			prev:    nil,
+			deleted: false,
 		},
-	}
+	})
 	if value, err := tx.Read("test_read"); err != nil || value != "ans" {
 		t.Errorf("failed to read data in write-set: %v\n", err)
 	}
@@ -179,17 +179,18 @@ func TestTx_Read(t *testing.T) {
 	tx.readSet = make(ReadSet)
 	tx.writeSet = make(WriteSet)
 	v := &Version{
-		key:   "test_read",
-		value: "ans",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    new(sync.Mutex),
+		key:     "test_read",
+		value:   "ans",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	tx.db.index.Store("test_read", Record{
 		key:   "test_read",
 		first: v,
 		last:  v,
+		mu:    new(sync.Mutex),
 	})
 	if value, err := tx.Read("test_read"); err != nil || value != "ans" {
 		t.Errorf("failed to read data in Index: %v\n", err)
@@ -199,12 +200,13 @@ func TestTx_Read(t *testing.T) {
 
 func TestTx_Insert(t *testing.T) {
 	db := NewTestDB()
-	tx := NewTx(1, db)
+	tx := NewTx(db)
 
 	if err := tx.Insert("test_insert", "ans"); err != nil {
 		t.Errorf("failed to insert data: %v\n", err)
 	}
-	op, exist := tx.writeSet["test_insert"]
+	operations, exist := tx.writeSet["test_insert"]
+	op := operations[0]
 	if !exist {
 		t.Error("not exist")
 	}
@@ -216,45 +218,45 @@ func TestTx_Insert(t *testing.T) {
 
 func TestTx_Update(t *testing.T) {
 	db := NewTestDB()
-	tx := NewTx(1, db)
-	tx.writeSet["test_update"] = &Operation{
+	tx := NewTx(db)
+	tx.writeSet["test_update"] = append(tx.writeSet["test_update"], &Operation{
 		cmd: INSERT,
 		version: &Version{
-			key:   "test_update",
-			value: "ans",
-			wTs:   0,
-			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			key:     "test_update",
+			value:   "ans",
+			wTs:     0,
+			rTs:     0,
+			prev:    nil,
+			deleted: false,
 		},
-	}
+	})
 	if err := tx.Update("test_update", "new_ans"); err != nil {
 		t.Errorf("failed to update data: %v\n", err)
 	}
-	if tx.writeSet["test_update"].version.value != "new_ans" {
-		t.Error("failed to update (wrong value)")
+	if value := tx.writeSet["test_update"][1].version.value; value != "new_ans" {
+		t.Errorf("failed to update (wrong value: %v)", value)
 	}
 	tx.DestructTx()
 }
 
 func TestTx_Delete(t *testing.T) {
 	db := NewTestDB()
-	tx := NewTx(1, db)
-	tx.writeSet["test_delete"] = &Operation{
+	tx := NewTx(db)
+	tx.writeSet["test_delete"] = append(tx.writeSet["test_delete"], &Operation{
 		cmd: INSERT,
 		version: &Version{
-			key:   "test_update",
-			value: "ans",
-			wTs:   0,
-			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			key:     "test_update",
+			value:   "ans",
+			wTs:     0,
+			rTs:     0,
+			prev:    nil,
+			deleted: false,
 		},
-	}
+	})
 	if err := tx.Delete("test_delete"); err != nil {
 		t.Errorf("failed to delete data: %v\n", err)
 	}
-	if len(tx.writeSet) != 1 || tx.writeSet["test_delete"].cmd != DELETE {
+	if len(tx.writeSet) != 1 || tx.writeSet["test_delete"][1].cmd != DELETE {
 		t.Error("failed to delete data")
 	}
 	tx.DestructTx()
@@ -263,57 +265,61 @@ func TestTx_Delete(t *testing.T) {
 func TestTx_Commit(t *testing.T) {
 	db := NewTestDB()
 	v1 := &Version{
-		key:   "test_commit1",
-		value: "ans1",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    new(sync.Mutex),
+		key:     "test_commit1",
+		value:   "ans1",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	v2 := &Version{
-		key:   "test_commit2",
-		value: "ans2",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    new(sync.Mutex),
+		key:     "test_commit2",
+		value:   "ans2",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	db.index.Store("test_commit1", Record{
 		key:   "test_commit1",
 		first: v1,
 		last:  v1,
+		mu:    new(sync.Mutex),
 	})
 	db.index.Store("test_commit2", Record{
 		key:   "test_commit2",
 		first: v2,
 		last:  v2,
+		mu:    new(sync.Mutex),
 	})
 
-	tx := NewTx(1, db)
-	tx.writeSet["test_commit1"] = &Operation{
+	tx := NewTx(db)
+	tx.writeSet["test_commit1"] = append(tx.writeSet["test_commit1"], &Operation{
 		cmd: UPDATE,
 		version: &Version{
 			key:     "test_commit1",
 			value:   "new_ans",
-			wTs:   0,
-			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			wTs:     0,
+			rTs:     0,
+			prev:    nil,
+			deleted: false,
 		},
-	}
-	tx.writeSet["test_commit2"] = &Operation{
+	})
+	tx.writeSet["test_commit2"] = append(tx.writeSet["test_commit2"], &Operation{
 		cmd: DELETE,
 		version: &Version{
 			key:     "test_commit2",
 			value:   "",
-			wTs:   0,
-			rTs:   0,
-			next:  nil,
-			mu:    new(sync.Mutex),
+			wTs:     0,
+			rTs:     0,
+			prev:    nil,
+			deleted: false,
 		},
-	}
+	})
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
 
 	if record, exist := tx.db.index.Load("test_commit1"); exist && record.(Record).last.value != "new_ans" {
 		t.Errorf("update log is not committed: %v", record.(Record).last.value)
