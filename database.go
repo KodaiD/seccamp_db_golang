@@ -44,7 +44,7 @@ func NewDB(walFileName, dbFileName string) *DB {
 		wALFile: walFile,
 		dBFile:  dbFile,
 		index:   sync.Map{},
-		n: 		 0,
+		n:       0,
 	}
 }
 
@@ -166,7 +166,6 @@ func (db *DB) loadWal() {
 				continue
 			}
 
-
 			switch op.cmd {
 			case INSERT:
 				record := Record{
@@ -211,7 +210,7 @@ func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 	checksum := binary.BigEndian.Uint32(buf[idx+size-4 : idx+size])
 
 	op := &Operation{
-		cmd:     cmd,
+		cmd: cmd,
 		version: &Version{
 			key:   key,
 			value: value,
@@ -276,7 +275,7 @@ func (db *DB) loadData() {
 			first: version,
 			last:  version,
 		})
-		fmt.Println("recovering...")
+		// fmt.Println("recovering...")
 	}
 }
 

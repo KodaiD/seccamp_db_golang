@@ -25,7 +25,7 @@ memo
 - wal size は 4KiB (page size) にしとく
 - wal に記録する 1 record あたりのデータ長は 1 byte で表せるものとする
 -------------------------------------------------------------------
- */
+*/
 
 const (
 	DBFileName  = "seccampdb.db"

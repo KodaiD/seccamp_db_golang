@@ -7,7 +7,6 @@ import (
 	"os"
 	"sync"
 	"testing"
-	"time"
 )
 
 const (
@@ -35,28 +34,28 @@ func TestDB_LoadWal(t *testing.T) {
 	defer db.wALFile.Close()
 
 	v1 := &Version{
-		key:   "key1",
-		value: "value1",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    nil,
+		key:     "key1",
+		value:   "value1",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	v2 := &Version{
-		key:   "key2",
-		value: "value2",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    nil,
+		key:     "key2",
+		value:   "value2",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	v3 := &Version{
-		key:   "key3",
-		value: "value3",
-		wTs:   0,
-		rTs:   0,
-		next:  nil,
-		mu:    nil,
+		key:     "key3",
+		value:   "value3",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
 	}
 	db.index.Store("key1", Record{
 		key:   "key1",
@@ -110,19 +109,21 @@ func generateTestData() {
 
 	// test data -> write-set
 	testWriteSet := make(WriteSet)
-	testWriteSet["test4"] = &Operation{INSERT, &Version{"test4", "value4", 0, 0, nil, new(sync.Mutex)}, time.Now()}
-	testWriteSet["test3"] = &Operation{UPDATE, &Version{"test3", "new_value3", 0, 0, nil, new(sync.Mutex)}, time.Now()}
-	testWriteSet["test2"] = &Operation{DELETE, &Version{"test2", "", 0, 0, nil, new(sync.Mutex)}, time.Now()}
+	testWriteSet["test4"] = append(testWriteSet["test4"], &Operation{INSERT, &Version{"test4", "value4", 0, 0, nil, false}})
+	testWriteSet["test3"] = append(testWriteSet["test3"], &Operation{UPDATE, &Version{"test3", "new_value3", 0, 0, nil, false}})
+	testWriteSet["test2"] = append(testWriteSet["test2"], &Operation{DELETE, &Version{"test2", "", 0, 0, nil, true}})
 
 	// write-set -> wal-file
 	buf := make([]byte, 4096)
 	idx := uint(0)
-	for _, op := range testWriteSet {
-		checksum := crc32.ChecksumIEEE([]byte(op.version.key))
+	for _, operations := range testWriteSet {
+		for _, op := range operations {
+			checksum := crc32.ChecksumIEEE([]byte(op.version.key))
 
-		// serialize data
-		size := serialize(buf, idx, op, checksum)
-		idx += size
+			// serialize data
+			size := serialize(buf, idx, op, checksum)
+			idx += size
+		}
 	}
 	if _, err := walFile.Write(buf); err != nil {
 		log.Fatal(err)
