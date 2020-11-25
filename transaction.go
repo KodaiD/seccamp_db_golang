@@ -60,10 +60,6 @@ func NewTx(db *DB) *Tx {
 func (tx *Tx) DestructTx() {
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
-	atomic.SwapUint64(&tx.db.n, tx.db.n-1)
-	if err := tx.db.wALFile.Close(); err != nil {
-		log.Println(err)
-	}
 }
 
 func (tx *Tx) Read(key string) (string, error) {
@@ -90,6 +86,9 @@ func (tx *Tx) Read(key string) (string, error) {
 
 		cur := record.last
 		for cur.rTs > tx.ts {
+			if cur.prev == nil {
+				break
+			}
 			cur = cur.prev
 		}
 		cur.rTs = tx.ts
@@ -161,9 +160,20 @@ func (tx *Tx) Commit() error {
 		for _, op := range operations {
 			switch op.cmd {
 			case INSERT:
-				if v, exist := tx.db.index.Load(op.version.key); !exist || !v.(*Record).last.deleted {
+				v, exist := tx.db.index.Load(op.version.key)
+				if exist {
+					if !v.(Record).last.deleted {
+						rollback(history)
+						tx.writeSet = make(WriteSet)
+						tx.readSet = make(ReadSet)
+						tx.ts = atomic.AddUint64(&tx.db.n, 1)
+						return errors.New("failed to commit INSERT")
+					}
 					rollback(history)
-					return errors.New("failed to commit")
+					tx.writeSet = make(WriteSet)
+					tx.readSet = make(ReadSet)
+					tx.ts = atomic.AddUint64(&tx.db.n, 1)
+					return errors.New("failed to commit INSERT")
 				}
 				record := Record{
 					key:   op.version.key,
@@ -177,7 +187,10 @@ func (tx *Tx) Commit() error {
 				v, exist := tx.db.index.Load(op.version.key)
 				if !exist {
 					rollback(history)
-					return errors.New("failed to commit")
+					tx.writeSet = make(WriteSet)
+					tx.readSet = make(ReadSet)
+					tx.ts = atomic.AddUint64(&tx.db.n, 1)
+					return errors.New("failed to commit UPDATE")
 				}
 				record := v.(Record)
 				record.mu.Lock()
@@ -185,7 +198,10 @@ func (tx *Tx) Commit() error {
 				if tx.ts < latest.rTs {
 					rollback(history)
 					record.mu.Unlock()
-					return errors.New("failed to commit")
+					tx.writeSet = make(WriteSet)
+					tx.readSet = make(ReadSet)
+					tx.ts = atomic.AddUint64(&tx.db.n, 1)
+					return errors.New("failed to commit UPDATE")
 				} else if tx.ts >= latest.rTs {
 					op.version.prev = latest
 					record.last = op.version
@@ -197,7 +213,10 @@ func (tx *Tx) Commit() error {
 				v, exist := tx.db.index.Load(op.version.key)
 				if !exist {
 					rollback(history)
-					return errors.New("failed to commit")
+					tx.writeSet = make(WriteSet)
+					tx.readSet = make(ReadSet)
+					tx.ts = atomic.AddUint64(&tx.db.n, 1)
+					return errors.New("failed to commit DELETE")
 				}
 				record := v.(Record)
 				record.mu.Lock()
@@ -207,7 +226,8 @@ func (tx *Tx) Commit() error {
 					record.mu.Unlock()
 					tx.writeSet = make(WriteSet)
 					tx.readSet = make(ReadSet)
-					return errors.New("failed to commit")
+					tx.ts = atomic.AddUint64(&tx.db.n, 1)
+					return errors.New("failed to commit DELETE")
 				} else if tx.ts >= latest.rTs {
 					op.version.prev = latest
 					record.last = op.version
@@ -222,6 +242,10 @@ func (tx *Tx) Commit() error {
 	// delete read/write-set
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
+
+	// update ts
+	tx.ts = atomic.AddUint64(&tx.db.n, 1)
+
 	return nil
 }
 

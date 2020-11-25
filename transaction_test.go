@@ -3,144 +3,276 @@ package main
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
-//// 1 tx
-//func TestPattern1(t *testing.T) {
-//	db := NewTestDB()
-//	tx := NewTx(1, db)
-//
-//	if err := tx.Insert("key1", "value1"); err != nil {
-//		t.Errorf("failed to insert: %v\n", err)
-//	}
-//	if err := tx.Read("key1"); err != nil {
-//		t.Errorf("failed to read: %v\n", err)
-//	}
-//	if err := tx.Insert("key2", "value2"); err != nil {
-//		t.Errorf("failed to insert: %v\n", err)
-//	}
-//	if err := tx.Update("key1", "new_value1"); err != nil {
-//		t.Errorf("failed to update: %v\n", err)
-//	}
-//	if err := tx.Insert("key3", "value3"); err != nil {
-//		t.Errorf("failed to insert: %v\n", err)
-//	}
-//	if err := tx.Delete("key2"); err != nil {
-//		t.Errorf("failed to delete: %v\n", err)
-//	}
-//	tx.Commit()
-//	if err := tx.Insert("key4", "value4"); err != nil {
-//		t.Errorf("failed to insert: %v\n", err)
-//	}
-//	newTx := NewTx(2, db)
-//	if err := newTx.Read("key4"); err == nil {
-//		t.Error("data after commit exists")
-//	}
-//}
-//
-//// 2 tx concurrent
-//func TestPattern2(t *testing.T) {
-//	db := NewTestDB()
-//	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
-//	db.index.Store("key2", Record{"key2", "value2", new(rwuMutex.RWUMutex), false})
-//
-//	tx1 := NewTx(1, db)
-//	tx2 := NewTx(2, db)
-//
-//	if err := tx1.Read("key1"); err != nil {
-//		t.Fatalf("failed to read: %v\n", err)
-//	}
-//	if err := tx2.Read("key1"); err != nil {
-//		t.Fatalf("cannot get read lock: %v\n", err)
-//	}
-//	if err := tx1.Insert("key3", "value3"); err != nil {
-//		t.Fatalf("failed to insert: %v\n", err)
-//	}
-//	if err := tx2.Read("key3"); err == nil {
-//		t.Fatal("write lock exist, should be failed")
-//	}
-//	if err := tx1.Update("key2", "new_value2"); err != nil {
-//		t.Fatalf("failed to update: %v\n", err)
-//	}
-//	if err := tx2.Update("key2", "new_new_value"); err == nil {
-//		t.Fatal("write lock exist, should be failed")
-//	}
-//}
-//
-//// 2 tx parallel
-//func TestPattern3(t *testing.T) {
-//	db := NewTestDB()
-//	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
-//	db.index.Store("key2", Record{"key2", "value2", new(rwuMutex.RWUMutex), false})
-//	db.index.Store("key3", Record{"key3", "value3", new(rwuMutex.RWUMutex), false})
-//
-//	tx1 := NewTx(1, db)
-//	tx2 := NewTx(2, db)
-//
-//	wg := sync.WaitGroup{}
-//
-//	// tx1
-//	wg.Add(1)
-//	go func() {
-//		defer wg.Done()
-//		tx1.Read("key1")
-//		tx1.Insert("key4", "value4")
-//		time.Sleep(time.Second * 3)
-//		tx1.Commit()
-//	}()
-//
-//	// tx2
-//	wg.Add(1)
-//	go func() {
-//		defer wg.Done()
-//		tx2.Read("key1")
-//		tx2.Update("key2", "new_value2")
-//		tx2.Delete("key3")
-//		time.Sleep(time.Second * 3)
-//		tx2.Commit()
-//	}()
-//
-//	wg.Wait()
-//
-//	if r, exist := db.index.Load("key1"); exist && r.(Record).value != "value1" {
-//		t.Fatalf("wrong result: %v\n", r.(Record).value)
-//	}
-//	if r, exist := db.index.Load("key2"); exist && r.(Record).value != "new_value2" {
-//		t.Fatalf("wrong result: %v\n", r.(Record).value)
-//	}
-//	if r, exist := db.index.Load("key3"); exist && r.(Record).value != "" {
-//		t.Fatalf("wrong result: %v\n", r.(Record).value)
-//	}
-//	if r, exist := db.index.Load("key4"); exist && r.(Record).value != "value4" {
-//		t.Fatalf("wrong result: %v\n", r.(Record).value)
-//	}
-//}
-//
-//func TestLogicalDelete(t *testing.T) {
-//	db := NewTestDB()
-//	db.index.Store("key1", Record{"key1", "value1", new(rwuMutex.RWUMutex), false})
-//
-//	tx1 := NewTx(1, db)
-//	tx2 := NewTx(2, db)
-//
-//	if err := tx1.Delete("key1"); err != nil {
-//		t.Fatalf("failed to delete: %v\n", err)
-//	}
-//	if err := tx2.Read("key1"); err == nil {
-//		t.Fatal("write lock exist, should be failed")
-//	}
-//	tx1.Commit()
-//	if record, exist := db.index.Load("key1"); exist && !record.(Record).deleted {
-//		t.Fatal("logical delete failed")
-//	}
-//
-//	if err := tx1.Read("key2"); err == nil {
-//		t.Fatal("should be failed")
-//	}
-//	if err := tx2.Insert("key2", "value2"); err == nil {
-//		t.Fatal("should be failed")
-//	}
-//}
+// 1 tx
+func TestPattern1(t *testing.T) {
+	db := NewTestDB()
+	tx := NewTx(db)
+	if err := tx.Insert("key1", "value1"); err != nil {
+		t.Fatalf("failed to insert: %v\n", err)
+	}
+	if value, err := tx.Read("key1"); err != nil || value != "value1" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if err := tx.Insert("key2", "value2"); err != nil {
+		t.Fatalf("failed to insert: %v\n", err)
+	}
+	if err := tx.Update("key1", "new_value1"); err != nil {
+		t.Fatalf("failed to update: %v\n", err)
+	}
+	if err := tx.Insert("key3", "value3"); err != nil {
+		t.Fatalf("failed to insert: %v\n", err)
+	}
+	if err := tx.Delete("key2"); err != nil {
+		t.Fatalf("failed to delete: %v\n", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+	if err := tx.Insert("key4", "value4"); err != nil {
+		t.Fatalf("failed to insert: %v\n", err)
+	}
+	newTx := NewTx(db)
+	if _, err := newTx.Read("key4"); err == nil {
+		t.Fatal("data after commit exists")
+	}
+}
+
+// 2 tx concurrent
+func TestPattern2(t *testing.T) {
+	db := NewTestDB()
+
+	v1 := &Version{
+		key:     "key1",
+		value:   "value1",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	v2 := &Version{
+		key:     "key2",
+		value:   "value2",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	db.index.Store("key1", Record{
+		key:   "key1",
+		first: v1,
+		last:  v1,
+		mu:    new(sync.Mutex),
+	})
+	db.index.Store("key2", Record{
+		key:   "key2",
+		first: v2,
+		last:  v2,
+		mu:    new(sync.Mutex),
+	})
+
+	tx1 := NewTx(db)
+	tx2 := NewTx(db)
+
+	if value, err := tx1.Read("key1"); err != nil || value != "value1" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if value, err := tx2.Read("key1"); err != nil || value != "value1" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if err := tx1.Insert("key3", "value3"); err != nil {
+		t.Fatalf("failed to insert: %v\n", err)
+	}
+	if _, err := tx2.Read("key3"); err == nil {
+		t.Fatal("should be failed")
+	}
+	if err := tx1.Update("key2", "new_value2"); err != nil {
+		t.Fatalf("failed to update: %v\n", err)
+	}
+	if err := tx1.Delete("key1"); err != nil {
+		t.Fatal("should be failed")
+	}
+
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+	if err := tx1.Commit(); err == nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	if err := tx1.Delete("key1"); err != nil {
+		t.Errorf("failed to delete: %v", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	if _, err := tx1.Read("key1"); err == nil {
+		t.Fatal("should be failed")
+	}
+	if _, err := tx2.Read("key1"); err == nil {
+		t.Fatal("should be failed")
+	}
+	if value, err := tx1.Read("key2"); err != nil || value != "new_value2" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if value, err := tx2.Read("key2"); err != nil || value != "new_value2" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if value, err := tx1.Read("key3"); err != nil || value != "value3" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if value, err := tx2.Read("key3"); err != nil || value != "value3" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+}
+
+// 2 tx parallel
+func TestPattern3(t *testing.T) {
+	db := NewTestDB()
+
+	v1 := &Version{
+		key:     "key1",
+		value:   "value1",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	v2 := &Version{
+		key:     "key2",
+		value:   "value2",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	v3 := &Version{
+		key:     "key3",
+		value:   "value3",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	db.index.Store("key1", Record{
+		key:   "key1",
+		first: v1,
+		last:  v1,
+		mu:    new(sync.Mutex),
+	})
+	db.index.Store("key2", Record{
+		key:   "key2",
+		first: v2,
+		last:  v2,
+		mu:    new(sync.Mutex),
+	})
+	db.index.Store("key3", Record{
+		key:   "key3",
+		first: v3,
+		last:  v3,
+		mu:    new(sync.Mutex),
+	})
+
+	tx1 := NewTx(db)
+	tx2 := NewTx(db)
+
+	wg := sync.WaitGroup{}
+
+	// tx1
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if value, err := tx1.Read("key1"); err != nil || value != "value1" {
+			t.Fatalf("failed to read: %v", err)
+		}
+		if err := tx1.Insert("key4", "value4"); err != nil {
+			t.Fatalf("failed to insert: %v", err)
+		}
+		time.Sleep(time.Second * 3)
+		if err := tx1.Commit(); err != nil {
+			t.Fatalf("failed to commit: %v", err)
+		}
+	}()
+
+	// tx2
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if value, err := tx2.Read("key1"); err != nil || value != "value1" {
+			t.Fatalf("failed to read: %v", err)
+		}
+		if err := tx2.Update("key2", "new_value2"); err != nil {
+			t.Fatalf("failed to update: %v", err)
+		}
+		if err := tx2.Delete("key3"); err != nil {
+			t.Fatalf("failed to delete: %v", err)
+		}
+		time.Sleep(time.Second * 3)
+		if err := tx2.Commit(); err != nil {
+			t.Fatalf("failed to commit: %v", err)
+		}
+	}()
+
+	wg.Wait()
+
+	if value, err := tx1.Read("key1"); err != nil || value != "value1" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if value, err := tx1.Read("key2"); err != nil || value != "new_value2" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if _, err := tx1.Read("key3"); err == nil {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+	if value, err := tx1.Read("key4"); err != nil || value != "value4" {
+		t.Fatalf("failed to read: %v\n", err)
+	}
+}
+
+func TestLogicalDelete(t *testing.T) {
+	db := NewTestDB()
+	v1 := &Version{
+		key:     "key1",
+		value:   "value1",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	db.index.Store("key1", Record{
+		key:   "key1",
+		first: v1,
+		last:  v1,
+		mu:    new(sync.Mutex),
+	})
+	tx1 := NewTx(db)
+	tx2 := NewTx(db)
+
+	if err := tx1.Delete("key1"); err != nil {
+		t.Fatalf("failed to delete: %v\n", err)
+	}
+	if err := tx2.Delete("key1"); err != nil {
+		t.Fatalf("failed to delete: %v\n", err)
+	}
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+	if record, exist := db.index.Load("key1"); !exist || !record.(Record).last.deleted {
+		t.Fatal("logical delete failed")
+	}
+	if _, err := tx1.Read("key1"); err == nil {
+		t.Fatal("should be failed")
+	}
+	if err := tx2.Insert("key1", "value1"); err != nil {
+		t.Fatalf("failed to insert: %v\n", err)
+	}
+	if err := tx2.Commit(); err == nil {
+		t.Fatal("should be failed")
+	}
+}
 
 func TestTx_Read(t *testing.T) {
 	db := NewTestDB()
