@@ -64,17 +64,20 @@ func TestPattern2(t *testing.T) {
 		key:   "key1",
 		first: v1,
 		last:  v1,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 	db.index.Store("key2", Record{
 		key:   "key2",
 		first: v2,
 		last:  v2,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 
 	tx1 := NewTx(db)
 	tx2 := NewTx(db)
+
+	// tx1: r1(1)       i1(3)       u1(2) d1(1)             c1(fail)
+	// tx2:       r2(1)       r2(3)             c2(success)
 
 	if value, err := tx1.Read("key1"); err != nil || value != "value1" {
 		t.Fatalf("failed to read: %v\n", err)
@@ -92,7 +95,7 @@ func TestPattern2(t *testing.T) {
 		t.Fatalf("failed to update: %v\n", err)
 	}
 	if err := tx1.Delete("key1"); err != nil {
-		t.Fatal("should be failed")
+		t.Errorf("failed to delete: %v", err)
 	}
 
 	if err := tx2.Commit(); err != nil {
@@ -101,6 +104,8 @@ func TestPattern2(t *testing.T) {
 	if err := tx1.Commit(); err == nil {
 		t.Fatalf("failed to commit: %v", err)
 	}
+
+	// tx1: d1(1) c1(success)
 
 	if err := tx1.Delete("key1"); err != nil {
 		t.Errorf("failed to delete: %v", err)
@@ -116,16 +121,16 @@ func TestPattern2(t *testing.T) {
 		t.Fatal("should be failed")
 	}
 	if value, err := tx1.Read("key2"); err != nil || value != "new_value2" {
-		t.Fatalf("failed to read: %v\n", err)
+		t.Fatalf("failed to read: [ERROR] %v [VALUE], \n", err)
 	}
 	if value, err := tx2.Read("key2"); err != nil || value != "new_value2" {
-		t.Fatalf("failed to read: %v\n", err)
+		t.Fatalf("failed to read: [ERROR] %v [VALUE], \n", err)
 	}
-	if value, err := tx1.Read("key3"); err != nil || value != "value3" {
-		t.Fatalf("failed to read: %v\n", err)
+	if value, err := tx1.Read("key3"); err == nil {
+		t.Fatalf("failed to read: %v returned\n", value)
 	}
-	if value, err := tx2.Read("key3"); err != nil || value != "value3" {
-		t.Fatalf("failed to read: %v\n", err)
+	if value, err := tx2.Read("key3"); err == nil {
+		t.Fatalf("failed to read: %v returned\n", value)
 	}
 }
 
@@ -161,19 +166,19 @@ func TestPattern3(t *testing.T) {
 		key:   "key1",
 		first: v1,
 		last:  v1,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 	db.index.Store("key2", Record{
 		key:   "key2",
 		first: v2,
 		last:  v2,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 	db.index.Store("key3", Record{
 		key:   "key3",
 		first: v3,
 		last:  v3,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 
 	tx1 := NewTx(db)
@@ -218,18 +223,88 @@ func TestPattern3(t *testing.T) {
 
 	wg.Wait()
 
+	if v, exist := db.index.Load("key1"); !exist || v.(Record).last.value != "value1" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
+	}
+	if v, exist := db.index.Load("key2"); !exist || v.(Record).last.value != "new_value2" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
+	}
+	if v, exist := db.index.Load("key3"); !exist || !(v.(Record).last.value == "" && v.(Record).last.deleted) {
+		t.Fatalf("wrong result: %v, should be deleted", v.(Record).last.value)
+	}
+	if v, exist := db.index.Load("key4"); !exist || v.(Record).last.value != "value4" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
+	}
+
+	// tx1: r(1) i(4)      c(success)
+	// tx2: r(1) u(2) d(3)      c(success)
+	// r1(1) r2(1) u2(2) d2(3) i1(4) c1 c2
+
+	// ========================================================================================
+
+	// tx1
 	if value, err := tx1.Read("key1"); err != nil || value != "value1" {
-		t.Fatalf("failed to read: %v\n", err)
+		t.Fatalf("failed to read: %v", err)
 	}
-	if value, err := tx1.Read("key2"); err != nil || value != "new_value2" {
-		t.Fatalf("failed to read: %v\n", err)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := tx1.Insert("key6", "value6"); err != nil {
+			t.Fatalf("failed to insert: %v", err)
+		}
+		time.Sleep(time.Second * 3)
+		if err := tx1.Commit(); err != nil {
+			t.Fatalf("failed to commit: %v", err)
+		}
+	}()
+
+	// tx2
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := tx2.Update("key1", "new_value1"); err != nil {
+			t.Fatalf("failed to update: %v", err)
+		}
+		if err := tx2.Update("key2", "new_new_value2"); err != nil {
+			t.Fatalf("failed to update: %v", err)
+		}
+		if err := tx2.Delete("key4"); err != nil {
+			t.Fatalf("failed to delete: %v", err)
+		}
+		if err := tx2.Insert("key5", "value5"); err != nil {
+			t.Fatalf("failed to insert: %v", err)
+		}
+		time.Sleep(time.Second * 3)
+		if err := tx2.Commit(); err == nil {
+			t.Fatal("should be failed")
+		}
+	}()
+
+	wg.Wait()
+
+	if v, exist := db.index.Load("key1"); !exist || v.(Record).last.value != "value1" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
 	}
-	if _, err := tx1.Read("key3"); err == nil {
-		t.Fatalf("failed to read: %v\n", err)
+	if v, exist := db.index.Load("key2"); !exist || v.(Record).last.value != "new_value2" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
 	}
-	if value, err := tx1.Read("key4"); err != nil || value != "value4" {
-		t.Fatalf("failed to read: %v\n", err)
+	if v, exist := db.index.Load("key3"); !exist || !(v.(Record).last.value == "" && v.(Record).last.deleted) {
+		t.Fatalf("wrong result: %v, should be deleted", v.(Record).last.value)
 	}
+	if v, exist := db.index.Load("key4"); !exist || v.(Record).last.value != "value4" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
+	}
+	if v, exist := db.index.Load("key5"); exist {
+		t.Fatalf("wrong result: %v, should not be deleted", v.(Record).last.value)
+	}
+	if v, exist := db.index.Load("key6"); !exist || v.(Record).last.value != "value6" {
+		t.Fatalf("wrong result: %v", v.(Record).last.value)
+	}
+
+	// tx1: r(1) i(6)     c(success)
+	// tx2: u(1) u(2) d(4) i(5) c(fail)
+	// r1(1) u2(1) i1(6) u2(2) d2(4) c1 i2(5) c2
 }
 
 func TestLogicalDelete(t *testing.T) {
@@ -246,7 +321,7 @@ func TestLogicalDelete(t *testing.T) {
 		key:   "key1",
 		first: v1,
 		last:  v1,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 	tx1 := NewTx(db)
 	tx2 := NewTx(db)
@@ -322,7 +397,7 @@ func TestTx_Read(t *testing.T) {
 		key:   "test_read",
 		first: v,
 		last:  v,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 	if value, err := tx.Read("test_read"); err != nil || value != "ans" {
 		t.Errorf("failed to read data in Index: %v\n", err)
@@ -416,13 +491,13 @@ func TestTx_Commit(t *testing.T) {
 		key:   "test_commit1",
 		first: v1,
 		last:  v1,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 	db.index.Store("test_commit2", Record{
 		key:   "test_commit2",
 		first: v2,
 		last:  v2,
-		mu:    new(sync.Mutex),
+		mu:    sync.Mutex{},
 	})
 
 	tx := NewTx(db)

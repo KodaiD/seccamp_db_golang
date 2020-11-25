@@ -14,6 +14,7 @@ const (
 	InWriteSet
 	InIndex
 	Deleted
+	NotInRWSet
 	NotExist
 )
 
@@ -21,7 +22,7 @@ type Record struct {
 	key   string
 	first *Version
 	last  *Version
-	mu    *sync.Mutex
+	mu    sync.Mutex
 }
 
 type Version struct {
@@ -63,42 +64,60 @@ func (tx *Tx) DestructTx() {
 }
 
 func (tx *Tx) Read(key string) (string, error) {
+	// data in read/write-set
 	v, where := tx.getVersion(key)
 	if where == InWriteSet || where == InReadSet {
 		return v.value, nil
-	} else {
-		record := tx.getRecord(key)
-		if record == nil {
-			v := Version{
-				key:     key,
-				value:   "",
-				wTs:     tx.ts,
-				rTs:     tx.ts,
-				prev:    nil,
-				deleted: true,
-			}
-			tx.readSet[key] = &v
+	}
+
+	record := tx.getRecord(key)
+	// data does not exist
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	if record == nil {
+		v := Version{
+			key:     key,
+			value:   "",
+			wTs:     tx.ts,
+			rTs:     tx.ts,
+			prev:    nil,
+			deleted: true, // prevent phantom problem
+		}
+		record = &Record{
+			key:   key,
+			first: &v,
+			last:  &v,
+			mu:    sync.Mutex{},
+		}
+		tx.readSet[key] = &v
+		tx.db.index.Store(key, &record)
+		return "", errors.New("key doesn't exist")
+	}
+
+	// data in index
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	cur := record.last
+	latest := cur
+	for cur.rTs > tx.ts {
+		if cur.deleted { // delete flag check
 			return "", errors.New("key doesn't exist")
 		}
-
-		record.mu.Lock()
-		defer record.mu.Unlock()
-
-		cur := record.last
-		for cur.rTs > tx.ts {
-			if cur.prev == nil {
-				break
-			}
-			cur = cur.prev
+		if cur.prev == nil {
+			break
 		}
-		cur.rTs = tx.ts
-		tx.readSet[key] = cur
-		return cur.value, nil
+		cur = cur.prev
 	}
+	if cur == latest { // cannot traverse
+		return "", errors.New("key doesn't exist")
+	}
+	cur.rTs = tx.ts
+	tx.readSet[key] = cur
+	return cur.value, nil
 }
 
 func (tx *Tx) Insert(key, value string) error {
-	_, where := tx.getVersion(key)
+	_, where := tx.getVersion(key) // read/write set の確認だけでいいのでは
 	if where == NotExist || where == Deleted {
 		v := Version{
 			key:     key,
@@ -159,17 +178,21 @@ func (tx *Tx) Commit() error {
 	for _, operations := range tx.writeSet {
 		for _, op := range operations {
 			switch op.cmd {
+			// いれるけどみせないフェーズ
+			// 見せるかつぜったいabortしないフェーズ
+
+			// or いっかつlock
 			case INSERT:
 				v, exist := tx.db.index.Load(op.version.key)
 				if exist {
 					if !v.(Record).last.deleted {
-						rollback(history)
+						tx.rollback(history)
 						tx.writeSet = make(WriteSet)
 						tx.readSet = make(ReadSet)
 						tx.ts = atomic.AddUint64(&tx.db.n, 1)
 						return errors.New("failed to commit INSERT")
 					}
-					rollback(history)
+					tx.rollback(history)
 					tx.writeSet = make(WriteSet)
 					tx.readSet = make(ReadSet)
 					tx.ts = atomic.AddUint64(&tx.db.n, 1)
@@ -179,24 +202,24 @@ func (tx *Tx) Commit() error {
 					key:   op.version.key,
 					first: op.version,
 					last:  op.version,
-					mu:    new(sync.Mutex),
+					mu:    sync.Mutex{},
 				}
-				tx.db.index.Store(op.version.key, record)
+				tx.db.index.Store(op.version.key, &record)
 				history = append(history, op.version)
 			case UPDATE:
 				v, exist := tx.db.index.Load(op.version.key)
 				if !exist {
-					rollback(history)
+					tx.rollback(history)
 					tx.writeSet = make(WriteSet)
 					tx.readSet = make(ReadSet)
 					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit UPDATE")
 				}
-				record := v.(Record)
+				record := v.(*Record)
 				record.mu.Lock()
 				latest := record.last
 				if tx.ts < latest.rTs {
-					rollback(history)
+					tx.rollback(history)
 					record.mu.Unlock()
 					tx.writeSet = make(WriteSet)
 					tx.readSet = make(ReadSet)
@@ -205,24 +228,25 @@ func (tx *Tx) Commit() error {
 				} else if tx.ts >= latest.rTs {
 					op.version.prev = latest
 					record.last = op.version
+
 					record.mu.Unlock()
-					tx.db.index.Store(op.version.key, record)
+					tx.db.index.Store(op.version.key, &record)
 					history = append(history, op.version)
 				}
 			case DELETE:
 				v, exist := tx.db.index.Load(op.version.key)
 				if !exist {
-					rollback(history)
+					tx.rollback(history)
 					tx.writeSet = make(WriteSet)
 					tx.readSet = make(ReadSet)
 					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit DELETE")
 				}
-				record := v.(Record)
+				record := v.(*Record)
 				record.mu.Lock()
 				latest := record.last
 				if tx.ts < latest.rTs {
-					rollback(history)
+					tx.rollback(history)
 					record.mu.Unlock()
 					tx.writeSet = make(WriteSet)
 					tx.readSet = make(ReadSet)
@@ -232,7 +256,7 @@ func (tx *Tx) Commit() error {
 					op.version.prev = latest
 					record.last = op.version
 					record.mu.Unlock()
-					tx.db.index.Store(op.version.key, record)
+					tx.db.index.Store(op.version.key, &record)
 					history = append(history, op.version)
 				}
 			}
@@ -258,11 +282,11 @@ func (tx *Tx) Abort() {
 
 func (tx *Tx) getRecord(key string) *Record {
 	if v, exist := tx.db.index.Load(key); exist {
-		record := v.(Record)
+		record := v.(*Record)
 		if record.last.deleted {
 			return nil
 		}
-		return &record
+		return record
 	}
 	return nil
 }
@@ -279,7 +303,6 @@ func (tx *Tx) getVersion(key string) (*Version, uint) {
 			}
 		}
 	}
-
 	// check read-set
 	if version, exist := tx.readSet[key]; exist {
 		if version.deleted {
@@ -287,16 +310,39 @@ func (tx *Tx) getVersion(key string) (*Version, uint) {
 		}
 		return version, InReadSet
 	}
-
 	// check index
 	if v, exist := tx.db.index.Load(key); exist {
-		record := v.(Record)
+		record := v.(*Record)
+		record.mu.Lock()
+		defer record.mu.Unlock()
 		if record.last.deleted {
 			return nil, Deleted
 		}
 		return record.last, InIndex
 	}
 	return nil, NotExist
+}
+
+func (tx *Tx) checkExistence(key string) (*Version, uint) {
+	// check write-set
+	for k, operations := range tx.writeSet {
+		for _, op := range operations {
+			if key == k {
+				if op.version.deleted {
+					return nil, Deleted
+				}
+				return op.version, InWriteSet
+			}
+		}
+	}
+	// check read-set
+	if version, exist := tx.readSet[key]; exist {
+		if version.deleted {
+			return nil, Deleted
+		}
+		return version, InReadSet
+	}
+	return nil, NotInRWSet
 }
 
 func (tx *Tx) SaveWal() {
@@ -324,9 +370,24 @@ func (tx *Tx) SaveWal() {
 	tx.db.walMu.Unlock()
 }
 
-func rollback(s []*Version) {
-	for i := len(s) - 1; 0 <= i; i-- {
-		s[i].prev = nil
+func (tx *Tx) rollback(history []*Version) {
+	for i := len(history) - 1; 0 <= i; i-- {
+		v, exist := tx.db.index.Load(history[i].key)
+		record := v.(*Record)
+		if !exist {
+			log.Fatal("rollback failed")
+		}
+
+		if history[i].prev == nil {
+			tx.db.index.Delete(history[i].key)
+			//history[i].prev.value = ""
+			//history[i].prev.rTs =
+			//history[i].prev.wTs =
+			//history[i].prev.deleted = true
+		} else {
+			record.last = history[i].prev
+			history[i].prev = nil
+		}
 	}
 }
 
@@ -336,7 +397,7 @@ func readAll(index *sync.Map) {
 	fmt.Println("----------------------------")
 	index.Range(func(k, v interface{}) bool {
 		key := k.(string)
-		record := v.(Record)
+		record := v.(*Record)
 		fmt.Printf("%s		| %s\n", key, record.last.value)
 		return true
 	})

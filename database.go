@@ -173,14 +173,14 @@ func (db *DB) loadWal() {
 					first: op.version,
 					last:  op.version,
 				}
-				db.index.Store(op.version.key, record)
+				db.index.Store(op.version.key, &record)
 			case UPDATE:
 				record := Record{
 					key:   op.version.key,
 					first: op.version,
 					last:  op.version,
 				}
-				db.index.Store(op.version.key, record)
+				db.index.Store(op.version.key, &record)
 			case DELETE:
 				db.index.Delete(op.version.key)
 			}
@@ -193,7 +193,7 @@ func serialize(buf []byte, idx uint, op *Operation, checksum uint32) uint {
 	size := uint(len(op.version.key) + len(op.version.value) + 7)
 	buf[idx] = uint8(size)
 	buf[idx+1] = uint8(len(op.version.key))
-	buf[idx+2] = uint8(op.cmd)
+	buf[idx+2] = op.cmd
 	copy(buf[idx+3:], op.version.key)
 	copy(buf[idx+3+uint(len(op.version.key)):], op.version.value)
 	binary.BigEndian.PutUint32(buf[idx+size-4:], checksum)
@@ -231,7 +231,7 @@ func (db *DB) saveData() {
 	}
 	db.index.Range(func(k, v interface{}) bool {
 		key := k.(string)
-		record := v.(Record)
+		record := v.(*Record)
 		line := key + " " + record.last.value + "\n"
 		_, err := tmpFile.WriteString(line)
 		if err != nil {
