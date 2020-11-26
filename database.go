@@ -23,11 +23,11 @@ const (
 )
 
 type DB struct {
-	walMu   sync.Mutex
-	wALFile *os.File
-	dBFile  *os.File
-	index   sync.Map
-	n       uint64
+	walMu       sync.Mutex
+	wALFile     *os.File
+	dBFile      *os.File
+	index       sync.Map
+	tsGenerator uint64
 }
 
 func NewDB(walFileName, dbFileName string) *DB {
@@ -41,10 +41,10 @@ func NewDB(walFileName, dbFileName string) *DB {
 	}
 
 	return &DB{
-		wALFile: walFile,
-		dBFile:  dbFile,
-		index:   sync.Map{},
-		n:       0,
+		wALFile:     walFile,
+		dBFile:      dbFile,
+		index:       sync.Map{},
+		tsGenerator: 0,
 	}
 }
 
