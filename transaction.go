@@ -65,50 +65,47 @@ func (tx *Tx) DestructTx() {
 
 func (tx *Tx) Read(key string) (string, error) {
 	// data in read/write-set
-	v, where := tx.getVersion(key)
+	version, where := tx.checkExistence(key)
 	if where == InWriteSet || where == InReadSet {
-		return v.value, nil
+		return version.value, nil
 	}
 
-	record := tx.getRecord(key)
+	version = &Version{
+		key:     key,
+		value:   "",
+		wTs:     tx.ts,
+		rTs:     tx.ts,
+		prev:    nil,
+		deleted: true, // prevent phantom problem
+	}
+	record := &Record{
+		key:   key,
+		first: version,
+		last:  version,
+		mu:    sync.Mutex{},
+	}
+	v, exist := tx.db.index.LoadOrStore(key, &record)
 	// data does not exist
-	record.mu.Lock()
-	defer record.mu.Unlock()
-	if record == nil {
-		v := Version{
-			key:     key,
-			value:   "",
-			wTs:     tx.ts,
-			rTs:     tx.ts,
-			prev:    nil,
-			deleted: true, // prevent phantom problem
-		}
-		record = &Record{
-			key:   key,
-			first: &v,
-			last:  &v,
-			mu:    sync.Mutex{},
-		}
-		tx.readSet[key] = &v
-		tx.db.index.Store(key, &record)
+	if !exist {
+		tx.readSet[key] = version
 		return "", errors.New("key doesn't exist")
 	}
 
 	// data in index
+	record = v.(*Record)
 	record.mu.Lock()
 	defer record.mu.Unlock()
 	cur := record.last
-	latest := cur
 	for cur.rTs > tx.ts {
 		if cur.deleted { // delete flag check
 			return "", errors.New("key doesn't exist")
 		}
-		if cur.prev == nil {
+		cur = cur.prev
+		if cur == nil {
 			break
 		}
-		cur = cur.prev
 	}
-	if cur == latest { // cannot traverse
+	if cur == nil { // cannot traverse
 		return "", errors.New("key doesn't exist")
 	}
 	cur.rTs = tx.ts
@@ -117,8 +114,8 @@ func (tx *Tx) Read(key string) (string, error) {
 }
 
 func (tx *Tx) Insert(key, value string) error {
-	_, where := tx.getVersion(key) // read/write set の確認だけでいいのでは
-	if where == NotExist || where == Deleted {
+	_, where := tx.checkExistence(key) // read/write-set の確認だけにする、ここでdeletedの確認をしたところで、commit時には変わっているかもしれない
+	if where == NotInRWSet {
 		v := Version{
 			key:     key,
 			value:   value,
@@ -134,7 +131,7 @@ func (tx *Tx) Insert(key, value string) error {
 }
 
 func (tx *Tx) Update(key, value string) error {
-	_, where := tx.getVersion(key)
+	_, where := tx.checkExistence(key) // read/write-set の確認だけにする
 	if where == NotExist || where == Deleted {
 		return errors.New("key doesn't exist")
 	}
@@ -151,7 +148,7 @@ func (tx *Tx) Update(key, value string) error {
 }
 
 func (tx *Tx) Delete(key string) error {
-	_, where := tx.getVersion(key)
+	_, where := tx.checkExistence(key) // read/write-set の確認だけにする
 	if where == NotExist || where == Deleted {
 		return errors.New("key doesn't exist")
 	}
@@ -178,10 +175,6 @@ func (tx *Tx) Commit() error {
 	for _, operations := range tx.writeSet {
 		for _, op := range operations {
 			switch op.cmd {
-			// いれるけどみせないフェーズ
-			// 見せるかつぜったいabortしないフェーズ
-
-			// or いっかつlock
 			case INSERT:
 				v, exist := tx.db.index.Load(op.version.key)
 				if exist {
@@ -291,25 +284,8 @@ func (tx *Tx) getRecord(key string) *Record {
 	return nil
 }
 
-func (tx *Tx) getVersion(key string) (*Version, uint) {
-	// check write-set
-	for k, operations := range tx.writeSet {
-		for _, op := range operations {
-			if key == k {
-				if op.version.deleted {
-					return nil, Deleted
-				}
-				return op.version, InWriteSet
-			}
-		}
-	}
-	// check read-set
-	if version, exist := tx.readSet[key]; exist {
-		if version.deleted {
-			return nil, Deleted
-		}
-		return version, InReadSet
-	}
+func (tx *Tx) getVersion(key string) (*Version, uint) { // TODO: いらない？
+
 	// check index
 	if v, exist := tx.db.index.Load(key); exist {
 		record := v.(*Record)
