@@ -25,7 +25,7 @@ type Record struct {
 	mu    sync.Mutex
 }
 
-type Version struct {
+type Version struct { // TODO: gc
 	key     string
 	value   string
 	wTs     uint64
@@ -179,16 +179,8 @@ func (tx *Tx) Commit() error {
 				v, exist := tx.db.index.Load(op.version.key)
 				if exist {
 					if !v.(Record).last.deleted {
-						tx.rollback(history)
-						tx.writeSet = make(WriteSet)
-						tx.readSet = make(ReadSet)
-						tx.ts = atomic.AddUint64(&tx.db.n, 1)
 						return errors.New("failed to commit INSERT")
 					}
-					tx.rollback(history)
-					tx.writeSet = make(WriteSet)
-					tx.readSet = make(ReadSet)
-					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit INSERT")
 				}
 				record := Record{
@@ -202,26 +194,17 @@ func (tx *Tx) Commit() error {
 			case UPDATE:
 				v, exist := tx.db.index.Load(op.version.key)
 				if !exist {
-					tx.rollback(history)
-					tx.writeSet = make(WriteSet)
-					tx.readSet = make(ReadSet)
-					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit UPDATE")
 				}
 				record := v.(*Record)
 				record.mu.Lock()
 				latest := record.last
 				if tx.ts < latest.rTs {
-					tx.rollback(history)
 					record.mu.Unlock()
-					tx.writeSet = make(WriteSet)
-					tx.readSet = make(ReadSet)
-					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit UPDATE")
 				} else if tx.ts >= latest.rTs {
 					op.version.prev = latest
 					record.last = op.version
-
 					record.mu.Unlock()
 					tx.db.index.Store(op.version.key, &record)
 					history = append(history, op.version)
@@ -229,21 +212,13 @@ func (tx *Tx) Commit() error {
 			case DELETE:
 				v, exist := tx.db.index.Load(op.version.key)
 				if !exist {
-					tx.rollback(history)
-					tx.writeSet = make(WriteSet)
-					tx.readSet = make(ReadSet)
-					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit DELETE")
 				}
 				record := v.(*Record)
 				record.mu.Lock()
 				latest := record.last
 				if tx.ts < latest.rTs {
-					tx.rollback(history)
 					record.mu.Unlock()
-					tx.writeSet = make(WriteSet)
-					tx.readSet = make(ReadSet)
-					tx.ts = atomic.AddUint64(&tx.db.n, 1)
 					return errors.New("failed to commit DELETE")
 				} else if tx.ts >= latest.rTs {
 					op.version.prev = latest
@@ -255,14 +230,6 @@ func (tx *Tx) Commit() error {
 			}
 		}
 	}
-
-	// delete read/write-set
-	tx.writeSet = make(WriteSet)
-	tx.readSet = make(ReadSet)
-
-	// update ts
-	tx.ts = atomic.AddUint64(&tx.db.n, 1)
-
 	return nil
 }
 
@@ -271,32 +238,6 @@ func (tx *Tx) Abort() {
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
 	fmt.Println("Abort!")
-}
-
-func (tx *Tx) getRecord(key string) *Record {
-	if v, exist := tx.db.index.Load(key); exist {
-		record := v.(*Record)
-		if record.last.deleted {
-			return nil
-		}
-		return record
-	}
-	return nil
-}
-
-func (tx *Tx) getVersion(key string) (*Version, uint) { // TODO: いらない？
-
-	// check index
-	if v, exist := tx.db.index.Load(key); exist {
-		record := v.(*Record)
-		record.mu.Lock()
-		defer record.mu.Unlock()
-		if record.last.deleted {
-			return nil, Deleted
-		}
-		return record.last, InIndex
-	}
-	return nil, NotExist
 }
 
 func (tx *Tx) checkExistence(key string) (*Version, uint) {

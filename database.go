@@ -132,6 +132,8 @@ func (db *DB) StartTx(reader io.Reader) {
 				if err := tx.Commit(); err != nil {
 					log.Println(err)
 				}
+				tx.DestructTx()
+				tx = NewTx(db)
 			case "abort":
 				tx.DestructTx()
 				return
