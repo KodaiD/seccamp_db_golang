@@ -57,17 +57,17 @@ func TestDB_LoadWal(t *testing.T) {
 		prev:    nil,
 		deleted: false,
 	}
-	db.index.Store("key1", Record{
+	db.index.Store("key1", &Record{
 		key:   "key1",
 		first: v1,
 		last:  v1,
 	})
-	db.index.Store("key2", Record{
+	db.index.Store("key2", &Record{
 		key:   "key2",
 		first: v2,
 		last:  v2,
 	})
-	db.index.Store("key3", Record{
+	db.index.Store("key3", &Record{
 		key:   "key3",
 		first: v3,
 		last:  v3,
@@ -78,7 +78,7 @@ func TestDB_LoadWal(t *testing.T) {
 	if _, exist := db.index.Load("test4"); !exist {
 		t.Error("failed to insert")
 	}
-	if v, exist := db.index.Load("test3"); !exist || v.(Record).last.value != "new_value3" {
+	if v, exist := db.index.Load("test3"); !exist || v.(*Record).last.value != "new_value3" {
 		t.Error("failed to update")
 	}
 }
