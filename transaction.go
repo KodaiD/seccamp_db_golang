@@ -169,12 +169,8 @@ func (tx *Tx) Delete(key string) error {
 }
 
 func (tx *Tx) Commit() error {
-	// serialization point
-
 	var err error
 
-	// write-set -> wal
-	tx.SaveWal()
 
 	// write-set -> db-memory
 
@@ -265,6 +261,9 @@ func (tx *Tx) Commit() error {
 		}
 	}
 
+	// write-set -> wal
+	tx.SaveWal()
+
 	for _, op := range sortedWriteSet {
 		switch op.cmd {
 		case INSERT:
@@ -280,6 +279,10 @@ func (tx *Tx) Commit() error {
 			record.last = op.version
 		}
 	}
+
+	// TODO: GC
+	// 起動中のtxのtsが入った配列の最小値をとってくる
+	// それより小さいversionを除去(対象は、version追加したとことか)
 
 	// 一括アンロック
 unlock:
