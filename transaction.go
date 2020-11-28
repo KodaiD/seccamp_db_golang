@@ -85,7 +85,7 @@ func (tx *Tx) Read(key string) (string, error) {
 		last:  version,
 		mu:    sync.Mutex{},
 	}
-	v, exist := tx.db.index.LoadOrStore(key, &record)
+	v, exist := tx.db.index.LoadOrStore(key, record)
 	// data does not exist
 	if !exist {
 		tx.readSet[key] = version
@@ -97,7 +97,7 @@ func (tx *Tx) Read(key string) (string, error) {
 	record.mu.Lock()
 	defer record.mu.Unlock()
 	cur := record.last
-	for cur.rTs > tx.ts {
+	for cur.wTs > tx.ts {
 		if cur.deleted { // delete flag check
 			return "", errors.New("key doesn't exist")
 		}
@@ -109,6 +109,9 @@ func (tx *Tx) Read(key string) (string, error) {
 	if cur == nil { // cannot traverse
 		return "", errors.New("key doesn't exist")
 	}
+	if cur.deleted { // delete flag check
+		return "", errors.New("key doesn't exist")
+	}
 	cur.rTs = tx.ts
 	tx.readSet[key] = cur
 	return cur.value, nil
@@ -116,7 +119,7 @@ func (tx *Tx) Read(key string) (string, error) {
 
 func (tx *Tx) Insert(key, value string) error {
 	_, where := tx.checkExistence(key) // read/write-set の確認だけにする、ここでdeletedの確認をしたところで、commit時には変わっているかもしれない
-	if where == NotInRWSet {
+	if where == NotInRWSet || where == Deleted {
 		v := Version{
 			key:     key,
 			value:   value,
@@ -133,7 +136,7 @@ func (tx *Tx) Insert(key, value string) error {
 
 func (tx *Tx) Update(key, value string) error {
 	_, where := tx.checkExistence(key) // read/write-set の確認だけにする
-	if where == NotExist || where == Deleted {
+	if where == Deleted {
 		return errors.New("key doesn't exist")
 	}
 	v := Version{
@@ -150,7 +153,7 @@ func (tx *Tx) Update(key, value string) error {
 
 func (tx *Tx) Delete(key string) error {
 	_, where := tx.checkExistence(key) // read/write-set の確認だけにする
-	if where == NotExist || where == Deleted {
+	if where == Deleted {
 		return errors.New("key doesn't exist")
 	}
 	v := Version{
@@ -174,72 +177,107 @@ func (tx *Tx) Commit() error {
 	tx.SaveWal()
 
 	// write-set -> db-memory
-	// 一括ロック
+
 	var sortedWriteSet []*Operation
 	for _, ops := range tx.writeSet {
 		for _, op := range ops {
 			sortedWriteSet = append(sortedWriteSet, op)
 		}
 	}
+
 	sort.SliceStable(sortedWriteSet, func(i, j int) bool { // prevent deadlock
 		return sortedWriteSet[i].version.key < sortedWriteSet[j].version.key
 	})
 	lockedRecord := make(map[string]*Record, len(sortedWriteSet))
+
+	// 一括ロック
 	for _, op := range sortedWriteSet {
-		var record *Record
-		v, exist := tx.db.index.Load(op.version.key)
-		if !exist {
-			if op.cmd == UPDATE || op.cmd == DELETE {
-				err = errors.New("failed to commit")
-				goto unlock
+		switch op.cmd {
+		case INSERT:
+			v, exist := tx.db.index.Load(op.version.key)
+			if exist {
+				record := v.(*Record)
+				record.mu.Lock()
+				lockedRecord[op.version.key] = record
+				if !record.last.deleted {
+					err = errors.New("failed to commit INSERT")
+					goto unlock
+				}
+				continue
 			}
-			record = &Record{
+			op.version.deleted = true
+			record := &Record{
 				key:   op.version.key,
 				first: op.version,
 				last:  op.version,
 				mu:    sync.Mutex{},
 			}
 			record.mu.Lock()
-			tx.db.index.Store(op.version.key, &record)
-		} else {
-			if op.cmd == INSERT {
-				err = errors.New("failed to commit")
+			lockedRecord[op.version.key] = record
+			_, exist = tx.db.index.LoadOrStore(op.version.key, record)
+			if exist {
+				err = errors.New("failed to commit INSERT")
 				goto unlock
 			}
-			record = v.(*Record)
+		case UPDATE:
+			_, exist := lockedRecord[op.version.key]
+			if exist {
+				continue
+			}
+
+			v, exist := tx.db.index.Load(op.version.key)
+			if !exist {
+				err = errors.New("failed to commit UPDATE")
+				goto unlock
+			}
+			record := v.(*Record)
 			record.mu.Lock()
+			lockedRecord[op.version.key] = record
+			if record.last.deleted {
+				err = errors.New("failed to commit UPDATE")
+				goto unlock
+			}
+			if tx.ts < record.last.rTs {
+				err = errors.New("failed to commit UPDATE")
+				goto unlock
+			}
+		case DELETE:
+			_, exist := lockedRecord[op.version.key]
+			if exist {
+				continue
+			}
+			v, exist := tx.db.index.Load(op.version.key)
+			if !exist {
+				err = errors.New("failed to commit DELETE")
+				goto unlock
+			}
+			record := v.(*Record)
+			record.mu.Lock()
+			lockedRecord[op.version.key] = record
+			if record.last.deleted {
+				err = errors.New("failed to commit DELETE")
+				goto unlock
+			}
+			if tx.ts < record.last.rTs {
+				err = errors.New("failed to commit DELETE")
+				goto unlock
+			}
 		}
-		lockedRecord[op.version.key] = record
 	}
 
 	for _, op := range sortedWriteSet {
 		switch op.cmd {
 		case INSERT:
 			record := lockedRecord[op.version.key]
-			if !record.last.deleted {
-				err = errors.New("failed to commit INSERT")
-				break
-			}
+			record.last.deleted = false
 		case UPDATE:
 			record := lockedRecord[op.version.key]
-			latest := record.last
-			if tx.ts < latest.rTs {
-				err = errors.New("failed to commit UPDATE")
-				break
-			} else if tx.ts >= latest.rTs {
-				op.version.prev = latest
-				record.last = op.version
-			}
+			op.version.prev = record.last
+			record.last = op.version
 		case DELETE:
 			record := lockedRecord[op.version.key]
-			latest := record.last
-			if tx.ts < latest.rTs {
-				err = errors.New("failed to commit DELETE")
-				break
-			} else if tx.ts >= latest.rTs {
-				op.version.prev = latest
-				record.last = op.version
-			}
+			op.version.prev = record.last
+			record.last = op.version
 		}
 	}
 
