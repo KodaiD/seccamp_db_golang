@@ -51,17 +51,32 @@ type Tx struct {
 }
 
 func NewTx(db *DB) *Tx {
-	return &Tx{
-		ts:       atomic.AddUint64(&db.tsGenerator, 1),
+	ts := atomic.AddUint64(&db.tsGenerator, 1)
+	tx :=  &Tx{
+		ts:       ts,
 		writeSet: make(WriteSet),
 		readSet:  make(ReadSet),
 		db:       db,
 	}
+	tx.db.aliveTx.mu.Lock()
+	defer tx.db.aliveTx.mu.Unlock()
+	db.aliveTx.txs = append(db.aliveTx.txs, ts)
+	return tx
 }
 
 func (tx *Tx) DestructTx() {
 	tx.writeSet = make(WriteSet)
 	tx.readSet = make(ReadSet)
+	tx.db.aliveTx.mu.Lock()
+	defer tx.db.aliveTx.mu.Unlock()
+	idx := 0
+	for i, ts := range tx.db.aliveTx.txs {
+		if tx.ts == ts {
+			idx = i
+			break
+		}
+	}
+	tx.db.aliveTx.txs = append(tx.db.aliveTx.txs[:idx], tx.db.aliveTx.txs[idx+1:]...)
 }
 
 func (tx *Tx) Read(key string) (string, error) {
@@ -171,9 +186,6 @@ func (tx *Tx) Delete(key string) error {
 func (tx *Tx) Commit() error {
 	var err error
 
-
-	// write-set -> db-memory
-
 	var sortedWriteSet []*Operation
 	for _, ops := range tx.writeSet {
 		for _, op := range ops {
@@ -264,6 +276,7 @@ func (tx *Tx) Commit() error {
 	// write-set -> wal
 	tx.SaveWal()
 
+	// write-set -> db-memory
 	for _, op := range sortedWriteSet {
 		switch op.cmd {
 		case INSERT:
@@ -281,8 +294,7 @@ func (tx *Tx) Commit() error {
 	}
 
 	// TODO: GC
-	// 起動中のtxのtsが入った配列の最小値をとってくる
-	// それより小さいversionを除去(対象は、version追加したとことか)
+	tx.db.versionGC(&sortedWriteSet)
 
 	// 一括アンロック
 unlock:

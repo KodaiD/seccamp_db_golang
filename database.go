@@ -28,6 +28,12 @@ type DB struct {
 	dBFile      *os.File
 	index       sync.Map
 	tsGenerator uint64
+	aliveTx     AliveTx
+}
+
+type AliveTx struct {
+	txs []uint64
+	mu  sync.RWMutex
 }
 
 func NewDB(walFileName, dbFileName string) *DB {
@@ -45,6 +51,7 @@ func NewDB(walFileName, dbFileName string) *DB {
 		dBFile:      dbFile,
 		index:       sync.Map{},
 		tsGenerator: 0,
+		aliveTx:     AliveTx{},
 	}
 }
 
@@ -290,5 +297,38 @@ func (db *DB) clearFile() {
 	}
 	if err := db.wALFile.Sync(); err != nil {
 		log.Println(err)
+	}
+}
+
+func (db *DB) versionGC(sortedWriteSet *[]*Operation) {
+	if len(*sortedWriteSet) > 0 {
+		// 起動中のtxのtsが入った配列の最小値をとってくる
+		db.aliveTx.mu.RLock()
+		min := db.aliveTx.txs[0]
+		for _, ts := range db.aliveTx.txs {
+			if ts < min {
+				min = ts
+			}
+		}
+
+
+		db.aliveTx.mu.RUnlock()
+		// それより小さいversionを除去(対象は、version追加したとことか)
+		var prev *Operation
+		for _, op := range *sortedWriteSet {
+			if prev != nil && prev.version.key == op.version.key {
+				continue
+			}
+			cur := op.version
+			if cur.prev != nil {
+				for cur != nil && min <= cur.wTs {
+					cur = cur.prev
+				}
+				if cur != nil {
+					cur.prev = nil
+				}
+			}
+			prev = op
+		}
 	}
 }
