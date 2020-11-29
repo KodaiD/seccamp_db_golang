@@ -2,7 +2,6 @@
 ## DBMS with MVTO
 Small key-value-store written in Go.
 - multi version timestamp ordering
-- no-wait
 
 ### Build and Run
 ```bash
@@ -26,9 +25,6 @@ seccampdb >> delete <key>
 
 // save current status
 seccampdb >> commit
-
-// read committed data
-seccampdb >> all
 
 // shutdown
 seccampdb >> exit
