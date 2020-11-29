@@ -144,8 +144,93 @@ func NewTestDB() *DB {
 	}
 
 	return &DB{
-		wALFile: walFile,
-		dBFile:  dbFile,
-		index:   sync.Map{},
+		walMu:       sync.Mutex{},
+		wALFile:     walFile,
+		dBFile:      dbFile,
+		index:       sync.Map{},
+		tsGenerator: 0,
+		aliveTx:     AliveTx{},
+	}
+}
+
+func TestDB_versionGC(t *testing.T) {
+	db := NewTestDB()
+	v1 := &Version{
+		key:     "key1",
+		value:   "value1",
+		wTs:     0,
+		rTs:     0,
+		prev:    nil,
+		deleted: false,
+	}
+	v2 := &Version{
+		key:     "key1",
+		value:   "value11",
+		wTs:     1,
+		rTs:     1,
+		prev:    v1,
+		deleted: false,
+	}
+	v3 := &Version{
+		key:     "key1",
+		value:   "value111",
+		wTs:     2,
+		rTs:     2,
+		prev:    v2,
+		deleted: false,
+	}
+	v4 := &Version{
+		key:     "key1",
+		value:   "value1111",
+		wTs:     3,
+		rTs:     3,
+		prev:    v3,
+		deleted: false,
+	}
+	v5 := &Version{
+		key:     "key1",
+		value:   "value11111",
+		wTs:     4,
+		rTs:     4,
+		prev:    v4,
+		deleted: false,
+	}
+	v6 := &Version{
+		key:     "key1",
+		value:   "value111111",
+		wTs:     5,
+		rTs:     5,
+		prev:    v5,
+		deleted: false,
+	}
+	db.index.Store("key1", &Record{
+		key:   "key1",
+		first: v1,
+		last:  v6,
+		mu:    sync.Mutex{},
+	})
+	sortedWriteSet := []*Operation{{
+		cmd:     UPDATE,
+		version: &Version{
+			key:     "key1",
+			value:   "new_value1",
+			wTs:     7,
+			rTs:     7,
+			prev:    v6,
+			deleted: false,
+		},
+	}}
+
+	db.aliveTx.txs = []uint64{5, 6, 7}
+
+	db.versionGC(&sortedWriteSet)
+
+	v, _ := db.index.Load("key1")
+	cur := v.(*Record).last
+	for cur.prev != nil {
+		cur = cur.prev
+	}
+	if cur.wTs != 4 {
+		t.Errorf("failed to do gc: ts = %v", cur.wTs)
 	}
 }
