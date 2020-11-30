@@ -179,14 +179,12 @@ func (db *DB) loadWal() {
 			case INSERT:
 				record := Record{
 					key:   op.version.key,
-					first: op.version,
 					last:  op.version,
 				}
 				db.index.Store(op.version.key, &record)
 			case UPDATE:
 				record := Record{
 					key:   op.version.key,
-					first: op.version,
 					last:  op.version,
 				}
 				db.index.Store(op.version.key, &record)
@@ -281,8 +279,8 @@ func (db *DB) loadData() {
 		}
 		db.index.Store(key, Record{
 			key:   key,
-			first: version,
 			last:  version,
+			mu:    sync.Mutex{},
 		})
 		// fmt.Println("recovering...")
 	}
@@ -310,9 +308,8 @@ func (db *DB) versionGC(sortedWriteSet *[]*Operation) {
 				min = ts
 			}
 		}
-
-
 		db.aliveTx.mu.RUnlock()
+
 		// それより小さいversionを除去(対象は、version追加したとことか)
 		var prev *Operation
 		for _, op := range *sortedWriteSet {

@@ -59,18 +59,18 @@ func TestDB_LoadWal(t *testing.T) {
 	}
 	db.index.Store("key1", &Record{
 		key:   "key1",
-		first: v1,
 		last:  v1,
+		mu:    sync.Mutex{},
 	})
 	db.index.Store("key2", &Record{
 		key:   "key2",
-		first: v2,
 		last:  v2,
+		mu:    sync.Mutex{},
 	})
 	db.index.Store("key3", &Record{
 		key:   "key3",
-		first: v3,
 		last:  v3,
+		mu:    sync.Mutex{},
 	})
 
 	// crash recovery (wal-file -> db-memory)
@@ -205,7 +205,6 @@ func TestDB_versionGC(t *testing.T) {
 	}
 	db.index.Store("key1", &Record{
 		key:   "key1",
-		first: v1,
 		last:  v6,
 		mu:    sync.Mutex{},
 	})

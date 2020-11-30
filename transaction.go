@@ -21,12 +21,11 @@ const (
 
 type Record struct {
 	key   string
-	first *Version
 	last  *Version
 	mu    sync.Mutex
 }
 
-type Version struct { // TODO: gc
+type Version struct {
 	key     string
 	value   string
 	wTs     uint64
@@ -96,7 +95,6 @@ func (tx *Tx) Read(key string) (string, error) {
 	}
 	record := &Record{
 		key:   key,
-		first: version,
 		last:  version,
 		mu:    sync.Mutex{},
 	}
@@ -216,7 +214,6 @@ func (tx *Tx) Commit() error {
 			op.version.deleted = true
 			record := &Record{
 				key:   op.version.key,
-				first: op.version,
 				last:  op.version,
 				mu:    sync.Mutex{},
 			}
@@ -293,7 +290,6 @@ func (tx *Tx) Commit() error {
 		}
 	}
 
-	// TODO: GC
 	tx.db.versionGC(&sortedWriteSet)
 
 	// 一括アンロック

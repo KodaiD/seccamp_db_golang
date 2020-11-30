@@ -64,13 +64,11 @@ func TestPattern2(t *testing.T) {
 	}
 	db.index.Store("key1", &Record{
 		key:   "key1",
-		first: v1,
 		last:  v1,
 		mu:    sync.Mutex{},
 	})
 	db.index.Store("key2", &Record{
 		key:   "key2",
-		first: v2,
 		last:  v2,
 		mu:    sync.Mutex{},
 	})
@@ -172,19 +170,16 @@ func TestPattern3(t *testing.T) {
 	}
 	db.index.Store("key1", &Record{
 		key:   "key1",
-		first: v1,
 		last:  v1,
 		mu:    sync.Mutex{},
 	})
 	db.index.Store("key2", &Record{
 		key:   "key2",
-		first: v2,
 		last:  v2,
 		mu:    sync.Mutex{},
 	})
 	db.index.Store("key3", &Record{
 		key:   "key3",
-		first: v3,
 		last:  v3,
 		mu:    sync.Mutex{},
 	})
@@ -331,7 +326,6 @@ func TestLogicalDelete(t *testing.T) {
 	}
 	db.index.Store("key1", &Record{
 		key:   "key1",
-		first: v1,
 		last:  v1,
 		mu:    sync.Mutex{},
 	})
@@ -410,7 +404,6 @@ func TestTx_Read(t *testing.T) {
 	}
 	tx.db.index.Store("test_read", &Record{
 		key:   "test_read",
-		first: v,
 		last:  v,
 		mu:    sync.Mutex{},
 	})
@@ -504,13 +497,11 @@ func TestTx_Commit(t *testing.T) {
 	}
 	db.index.Store("test_commit1", &Record{
 		key:   "test_commit1",
-		first: v1,
 		last:  v1,
 		mu:    sync.Mutex{},
 	})
 	db.index.Store("test_commit2", &Record{
 		key:   "test_commit2",
-		first: v2,
 		last:  v2,
 		mu:    sync.Mutex{},
 	})
