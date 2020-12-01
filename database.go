@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -86,68 +87,75 @@ func (db *DB) Setup() {
 	db.clearFile()
 }
 
-func (db *DB) StartTx(reader io.Reader) {
+func (db *DB) StartTx(conn net.Conn) {
 	tx := NewTx(db)
-	scanner := bufio.NewScanner(reader)
+	scanner := bufio.NewScanner(conn)
 	for {
-		fmt.Print("seccampdb >> ")
+		conn.Write([]byte("seccampdb >> "))
 		if scanner.Scan() {
 			input := strings.Fields(scanner.Text())
 			cmd := input[0]
 			switch cmd {
 			case "read":
 				if len(input) != 2 {
-					fmt.Println("wrong format -> read <key>")
+					conn.Write([]byte("wrong format -> read <key>\n"))
 					continue
 				}
 				key := input[1]
 				value, err := tx.Read(key)
 				if err != nil {
-					log.Println(err)
+					conn.Write([]byte(err.Error()+"\n"))
+
+				} else {
+					conn.Write([]byte(value+"\n"))
 				}
-				fmt.Println(value)
 			case "insert":
 				if len(input) != 3 {
-					fmt.Println("wrong format -> insert <key> <value>")
+					conn.Write([]byte("wrong format -> insert <key> <value>\n"))
 					continue
 				}
 				key := input[1]
 				value := input[2]
 				if err := tx.Insert(key, value); err != nil {
-					log.Println(err)
+					conn.Write([]byte(err.Error()+"\n"))
 				}
 			case "update":
 				if len(input) != 3 {
-					fmt.Println("wrong format -> update <key> <value>")
+					conn.Write([]byte("wrong format -> update <key> <value>\n"))
 					continue
 				}
 				key := input[1]
 				value := input[2]
 				if err := tx.Update(key, value); err != nil {
-					log.Println(err)
+					conn.Write([]byte(err.Error()+"\n"))
 				}
 			case "delete":
 				if len(input) != 2 {
-					fmt.Println("wrong format -> delete <key>")
+					conn.Write([]byte("wrong format -> delete <key>\n"))
 					continue
 				}
 				key := input[1]
 				if err := tx.Delete(key); err != nil {
-					log.Println(err)
+					conn.Write([]byte(err.Error()+"\n"))
 				}
 			case "commit":
 				if err := tx.Commit(); err != nil {
-					log.Println(err)
+					conn.Write([]byte(err.Error()+"\n"))
 				}
-				tx.DestructTx()
-				tx = NewTx(db)
+				conn.Write([]byte("committed\n"))
+				fmt.Println("committed")
+				conn.Close()
+				return
 			case "abort":
 				tx.DestructTx()
+				conn.Write([]byte("aborted\n"))
+				fmt.Println("aborted")
+				conn.Close()
 				return
 			case "all":
 				readAll(&db.index) // TODO:
 			default:
-				fmt.Println("command not supported")
+				conn.Write([]byte("command not supported\n"))
 			}
 		}
 	}
@@ -231,7 +239,6 @@ func deserialize(buf []byte, idx uint) (uint, *Operation, uint32) {
 }
 
 func (db *DB) saveData() {
-	fmt.Println("start----------------")
 	tmpFile, err := os.Create(TmpFileName)
 	if err != nil {
 		log.Fatal(err)
@@ -277,7 +284,7 @@ func (db *DB) loadData() {
 			rTs:   0,
 			prev:  nil,
 		}
-		db.index.Store(key, Record{
+		db.index.Store(key, &Record{
 			key:   key,
 			last:  version,
 			mu:    sync.Mutex{},

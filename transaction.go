@@ -271,7 +271,9 @@ func (tx *Tx) Commit() error {
 	}
 
 	// write-set -> wal
-	tx.SaveWal()
+	if err := tx.SaveWal(); err != nil {
+		log.Println(err)
+	}
 
 	// write-set -> db-memory
 	for _, op := range sortedWriteSet {
@@ -330,7 +332,7 @@ func (tx *Tx) checkExistence(key string) (*Version, uint) {
 	return nil, NotInRWSet
 }
 
-func (tx *Tx) SaveWal() {
+func (tx *Tx) SaveWal() error {
 	// make redo log
 	buf := make([]byte, 4096)
 	idx := uint(0) // 書き込み開始位置
@@ -347,12 +349,14 @@ func (tx *Tx) SaveWal() {
 
 	tx.db.walMu.Lock()
 	if _, err := tx.db.wALFile.Write(buf); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	if err := tx.db.wALFile.Sync(); err != nil {
-		log.Println("cannot sync wal-file")
+		return err
 	}
 	tx.db.walMu.Unlock()
+
+	return nil
 }
 
 // read all data in db-memory
