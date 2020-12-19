@@ -1,12 +1,23 @@
 # seccamp_db_golang
 ## DBMS with MVTO
-Small key-value-store written in Go.
-- multi version timestamp ordering
+Small In-memory DBMS written in Go.
+
+### Features
+This DBMS provides the following:
+- CC protocol: Multi-version timestamp ordering
+- Crash Recovery
+- Checkpointing
 
 ### Build and Run
-```bash
-seccamp_db_golang >> go build -o seccampdb
-seccamp_db_golang >> ./seccampdb
+Server
+```
+$ go build -o seccampdb
+$ ./seccampdb
+```
+Client
+```
+$ telnet localhost 7777
+seccampdb >> 
 ```
 
 ### Usage
@@ -25,9 +36,6 @@ seccampdb >> delete <key>
 
 // save current status
 seccampdb >> commit
-
-// shutdown
-seccampdb >> exit
 
 // abort
 seccampdb >> abort
