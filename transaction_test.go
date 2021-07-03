@@ -63,14 +63,14 @@ func TestPattern2(t *testing.T) {
 		deleted: false,
 	}
 	db.index.Store("key1", &Record{
-		key:   "key1",
-		last:  v1,
-		mu:    sync.Mutex{},
+		key:  "key1",
+		last: v1,
+		mu:   sync.Mutex{},
 	})
 	db.index.Store("key2", &Record{
-		key:   "key2",
-		last:  v2,
-		mu:    sync.Mutex{},
+		key:  "key2",
+		last: v2,
+		mu:   sync.Mutex{},
 	})
 
 	tx1 := NewTx(db)
@@ -121,7 +121,7 @@ func TestPattern2(t *testing.T) {
 	tx3 := NewTx(db)
 
 	if value, err := tx3.Read("key1"); err == nil {
-		t.Fatalf("should be failed: read %v" ,value)
+		t.Fatalf("should be failed: read %v", value)
 	}
 	if _, err := tx3.Read("key1"); err == nil {
 		t.Fatal("should be failed")
@@ -169,19 +169,19 @@ func TestPattern3(t *testing.T) {
 		deleted: false,
 	}
 	db.index.Store("key1", &Record{
-		key:   "key1",
-		last:  v1,
-		mu:    sync.Mutex{},
+		key:  "key1",
+		last: v1,
+		mu:   sync.Mutex{},
 	})
 	db.index.Store("key2", &Record{
-		key:   "key2",
-		last:  v2,
-		mu:    sync.Mutex{},
+		key:  "key2",
+		last: v2,
+		mu:   sync.Mutex{},
 	})
 	db.index.Store("key3", &Record{
-		key:   "key3",
-		last:  v3,
-		mu:    sync.Mutex{},
+		key:  "key3",
+		last: v3,
+		mu:   sync.Mutex{},
 	})
 
 	tx1 := NewTx(db)
@@ -325,9 +325,9 @@ func TestLogicalDelete(t *testing.T) {
 		deleted: false,
 	}
 	db.index.Store("key1", &Record{
-		key:   "key1",
-		last:  v1,
-		mu:    sync.Mutex{},
+		key:  "key1",
+		last: v1,
+		mu:   sync.Mutex{},
 	})
 	tx1 := NewTx(db)
 	tx2 := NewTx(db)
@@ -403,9 +403,9 @@ func TestTx_Read(t *testing.T) {
 		deleted: false,
 	}
 	tx.db.index.Store("test_read", &Record{
-		key:   "test_read",
-		last:  v,
-		mu:    sync.Mutex{},
+		key:  "test_read",
+		last: v,
+		mu:   sync.Mutex{},
 	})
 	if value, err := tx.Read("test_read"); err != nil || value != "ans" {
 		t.Errorf("failed to read data in Index: %v\n", err)
@@ -496,14 +496,14 @@ func TestTx_Commit(t *testing.T) {
 		deleted: false,
 	}
 	db.index.Store("test_commit1", &Record{
-		key:   "test_commit1",
-		last:  v1,
-		mu:    sync.Mutex{},
+		key:  "test_commit1",
+		last: v1,
+		mu:   sync.Mutex{},
 	})
 	db.index.Store("test_commit2", &Record{
-		key:   "test_commit2",
-		last:  v2,
-		mu:    sync.Mutex{},
+		key:  "test_commit2",
+		last: v2,
+		mu:   sync.Mutex{},
 	})
 
 	tx := NewTx(db)

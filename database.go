@@ -104,10 +104,10 @@ func (db *DB) StartTx(conn net.Conn) {
 				key := input[1]
 				value, err := tx.Read(key)
 				if err != nil {
-					conn.Write([]byte(err.Error()+"\n"))
+					conn.Write([]byte(err.Error() + "\n"))
 
 				} else {
-					conn.Write([]byte(value+"\n"))
+					conn.Write([]byte(value + "\n"))
 				}
 			case "insert":
 				if len(input) != 3 {
@@ -117,7 +117,7 @@ func (db *DB) StartTx(conn net.Conn) {
 				key := input[1]
 				value := input[2]
 				if err := tx.Insert(key, value); err != nil {
-					conn.Write([]byte(err.Error()+"\n"))
+					conn.Write([]byte(err.Error() + "\n"))
 				}
 			case "update":
 				if len(input) != 3 {
@@ -127,7 +127,7 @@ func (db *DB) StartTx(conn net.Conn) {
 				key := input[1]
 				value := input[2]
 				if err := tx.Update(key, value); err != nil {
-					conn.Write([]byte(err.Error()+"\n"))
+					conn.Write([]byte(err.Error() + "\n"))
 				}
 			case "delete":
 				if len(input) != 2 {
@@ -136,11 +136,11 @@ func (db *DB) StartTx(conn net.Conn) {
 				}
 				key := input[1]
 				if err := tx.Delete(key); err != nil {
-					conn.Write([]byte(err.Error()+"\n"))
+					conn.Write([]byte(err.Error() + "\n"))
 				}
 			case "commit":
 				if err := tx.Commit(); err != nil {
-					conn.Write([]byte(err.Error()+"\n"))
+					conn.Write([]byte(err.Error() + "\n"))
 				}
 				conn.Write([]byte("committed\n"))
 				fmt.Println("committed")
@@ -186,14 +186,14 @@ func (db *DB) loadWal() {
 			switch op.cmd {
 			case INSERT:
 				record := Record{
-					key:   op.version.key,
-					last:  op.version,
+					key:  op.version.key,
+					last: op.version,
 				}
 				db.index.Store(op.version.key, &record)
 			case UPDATE:
 				record := Record{
-					key:   op.version.key,
-					last:  op.version,
+					key:  op.version.key,
+					last: op.version,
 				}
 				db.index.Store(op.version.key, &record)
 			case DELETE:
@@ -285,9 +285,9 @@ func (db *DB) loadData() {
 			prev:  nil,
 		}
 		db.index.Store(key, &Record{
-			key:   key,
-			last:  version,
-			mu:    sync.Mutex{},
+			key:  key,
+			last: version,
+			mu:   sync.Mutex{},
 		})
 		// fmt.Println("recovering...")
 	}

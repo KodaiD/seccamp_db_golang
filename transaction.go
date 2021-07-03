@@ -20,9 +20,9 @@ const (
 )
 
 type Record struct {
-	key   string
-	last  *Version
-	mu    sync.Mutex
+	key  string
+	last *Version
+	mu   sync.Mutex
 }
 
 type Version struct {
@@ -51,7 +51,7 @@ type Tx struct {
 
 func NewTx(db *DB) *Tx {
 	ts := atomic.AddUint64(&db.tsGenerator, 1)
-	tx :=  &Tx{
+	tx := &Tx{
 		ts:       ts,
 		writeSet: make(WriteSet),
 		readSet:  make(ReadSet),
@@ -94,9 +94,9 @@ func (tx *Tx) Read(key string) (string, error) {
 		deleted: true, // prevent phantom problem
 	}
 	record := &Record{
-		key:   key,
-		last:  version,
-		mu:    sync.Mutex{},
+		key:  key,
+		last: version,
+		mu:   sync.Mutex{},
 	}
 	v, exist := tx.db.index.LoadOrStore(key, record)
 	// data does not exist
@@ -213,9 +213,9 @@ func (tx *Tx) Commit() error {
 			}
 			op.version.deleted = true
 			record := &Record{
-				key:   op.version.key,
-				last:  op.version,
-				mu:    sync.Mutex{},
+				key:  op.version.key,
+				last: op.version,
+				mu:   sync.Mutex{},
 			}
 			record.mu.Lock()
 			lockedRecord[op.version.key] = record

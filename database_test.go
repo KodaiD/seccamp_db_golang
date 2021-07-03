@@ -58,19 +58,19 @@ func TestDB_LoadWal(t *testing.T) {
 		deleted: false,
 	}
 	db.index.Store("key1", &Record{
-		key:   "key1",
-		last:  v1,
-		mu:    sync.Mutex{},
+		key:  "key1",
+		last: v1,
+		mu:   sync.Mutex{},
 	})
 	db.index.Store("key2", &Record{
-		key:   "key2",
-		last:  v2,
-		mu:    sync.Mutex{},
+		key:  "key2",
+		last: v2,
+		mu:   sync.Mutex{},
 	})
 	db.index.Store("key3", &Record{
-		key:   "key3",
-		last:  v3,
-		mu:    sync.Mutex{},
+		key:  "key3",
+		last: v3,
+		mu:   sync.Mutex{},
 	})
 
 	// crash recovery (wal-file -> db-memory)
@@ -204,12 +204,12 @@ func TestDB_versionGC(t *testing.T) {
 		deleted: false,
 	}
 	db.index.Store("key1", &Record{
-		key:   "key1",
-		last:  v6,
-		mu:    sync.Mutex{},
+		key:  "key1",
+		last: v6,
+		mu:   sync.Mutex{},
 	})
 	sortedWriteSet := []*Operation{{
-		cmd:     UPDATE,
+		cmd: UPDATE,
 		version: &Version{
 			key:     "key1",
 			value:   "new_value1",
